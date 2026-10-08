@@ -1,155 +1,119 @@
 package com.keyfekederradyo.android
 
-import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
-import android.widget.ImageButton
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 
+/** Neon station grid: glass card, big cover, name + genre; the playing card glows. */
 class StationAdapter(
     private val onClick: (Station) -> Unit,
     private val isFavorite: (Station) -> Boolean,
-    private val onFavorite: (Station) -> Unit
+    private val onFavorite: (Station) -> Unit,
 ) : RecyclerView.Adapter<StationAdapter.Holder>() {
-    private val items = mutableListOf<Station>()
-    private var playingUrl: String? = PlaybackState.playingUrl
-    private val playbackListener: (String?) -> Unit = { url ->
+    private var items = emptyList<Station>()
+    private var playingUrl: String? = null
+    private var animateFrom = 0
+
+    private val playingListener: (String?) -> Unit = { url ->
+        val old = playingUrl
         playingUrl = url
+        items.indexOfFirst { it.resolvedUrl == old }.takeIf { it >= 0 }?.let { notifyItemChanged(it) }
+        items.indexOfFirst { it.resolvedUrl == url }.takeIf { it >= 0 }?.let { notifyItemChanged(it) }
+    }
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) { PlaybackState.addListener(playingListener) }
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) { PlaybackState.removeListener(playingListener) }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun submitList(list: List<Station>) {
+        items = list
+        animateFrom = 0
         notifyDataSetChanged()
     }
 
-    init {
-        PlaybackState.addListener(playbackListener)
-    }
+    @SuppressLint("NotifyDataSetChanged")
+    fun refresh() { animateFrom = Int.MAX_VALUE; notifyDataSetChanged() }
 
-    fun submitList(stations: List<Station>) {
-        items.clear()
-        items.addAll(stations)
-        notifyDataSetChanged()
-    }
-
-    fun setPlayingStation(url: String?) = PlaybackState.setPlaying(url)
+    override fun getItemCount() = items.size
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-        val context = parent.context
-        val card = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(10.dp(context), 8.dp(context), 10.dp(context), 8.dp(context))
-            layoutParams = RecyclerView.LayoutParams(-1, 202.dp(context)).apply {
-                leftMargin = 5.dp(context); rightMargin = 5.dp(context); bottomMargin = 10.dp(context)
+        val ui = Ui(parent.context)
+        val card = FrameLayout(parent.context).apply {
+            layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(214)).apply {
+                setMargins(ui.dp(7), ui.dp(7), ui.dp(7), ui.dp(7))
             }
-            background = GradientDrawable().apply { setColor(Color.rgb(27,27,29)); cornerRadius = 22.dp(context).toFloat(); setStroke(1.dp(context), Color.rgb(48,48,51)) }
-            isClickable = true; isFocusable = true; elevation = 2.dp(context).toFloat()
+            isClickable = true; isFocusable = true
         }
-        val top = LinearLayout(context).apply { gravity = Gravity.TOP; layoutParams = LinearLayout.LayoutParams(-1, 30.dp(context)) }
-        val badgeView = TextView(context).apply {
-            textSize = 8.5f; setTextColor(Color.rgb(255,122,0)); gravity = Gravity.CENTER_VERTICAL; visibility = View.GONE; setTypeface(typeface, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0,-1,1f)
+        val column = LinearLayout(parent.context).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(ui.dp(12), ui.dp(16), ui.dp(12), ui.dp(12))
         }
-        val favoriteView = ImageButton(context).apply {
-            setBackgroundColor(Color.TRANSPARENT); setPadding(5.dp(context),3.dp(context),3.dp(context),3.dp(context)); scaleType = ImageView.ScaleType.CENTER_INSIDE
-            layoutParams = LinearLayout.LayoutParams(38.dp(context),38.dp(context)); contentDescription = "Favorilere ekle"
+        val logo = StationArtworkView(parent.context)
+        column.addView(logo, LinearLayout.LayoutParams(ui.dp(104), ui.dp(104)).apply { bottomMargin = ui.dp(12) })
+        val title = ui.text("", 14.5f, Neon.TEXT, true).apply { gravity = Gravity.CENTER }
+        val meta = ui.text("", 11.5f, Neon.MUTED).apply { gravity = Gravity.CENTER }
+        val live = ui.label("● Canlı", Neon.ORANGE).apply { gravity = Gravity.CENTER; visibility = View.GONE }
+        column.addView(title, LinearLayout.LayoutParams(-1, -2))
+        column.addView(meta, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+        column.addView(live, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
+        card.addView(column, FrameLayout.LayoutParams(-1, -1))
+        val fav = ImageView(parent.context).apply {
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
+            isClickable = true
         }
-        top.addView(badgeView); top.addView(favoriteView)
-        val logoView = StationArtworkView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(88.dp(context),88.dp(context)).apply { bottomMargin = 6.dp(context) }
-        }
-        val titleView = TextView(context).apply {
-            textSize = 14.5f; setTextColor(Color.rgb(245,245,247)); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(-1,24.dp(context))
-        }
-        val metaView = TextView(context).apply {
-            textSize = 9.5f; setTextColor(Color.rgb(145,145,150)); gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(-1,19.dp(context))
-        }
-        val liveView = TextView(context).apply {
-            textSize = 8.5f; setTextColor(Color.rgb(255,122,0)); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(-1,18.dp(context))
-        }
-        card.addView(top); card.addView(logoView); card.addView(titleView); card.addView(metaView); card.addView(liveView)
-        return Holder(card, logoView, titleView, metaView, badgeView, favoriteView, liveView)
+        card.addView(fav, FrameLayout.LayoutParams(ui.dp(42), ui.dp(42), Gravity.TOP or Gravity.END).apply { topMargin = ui.dp(4); rightMargin = ui.dp(4) })
+        return Holder(card, logo, title, meta, live, fav)
     }
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val station = items[position]
+        val ui = Ui(holder.itemView.context)
         val active = station.resolvedUrl == playingUrl
-        val context = holder.itemView.context
-        holder.logoView.contentDescription = station.name
-        holder.logoView.bind(station.name, station.genre, station.logoUrl)
-        holder.titleView.text = station.name
-        holder.metaView.text = listOf(station.genre, station.country, station.language).filter { it.isNotBlank() }.distinct().joinToString(" • ").ifBlank { "Canlı radyo" }
+        val accent = StationArtworkView.accentFor(station.genre)
+        holder.itemView.background = if (active)
+            ui.glass(26f, Neon.withAlpha(accent, 150), gradient = intArrayOf(Neon.withAlpha(accent, 70), 0x26FF2E88, 0x14FFFFFF))
+        else ui.glass(26f)
+        holder.logo.bind(station.name, station.genre, station.logoUrl)
+        holder.logo.setPlaying(active)
+        holder.logo.contentDescription = station.name
+        holder.title.text = station.name
+        holder.meta.text = listOf(station.genre, station.country).filter { it.isNotBlank() }.distinct().joinToString(" • ").ifBlank { "Canlı radyo" }
+        holder.live.visibility = if (active) View.VISIBLE else View.GONE
+
         val favorite = isFavorite(station)
-        holder.badgeView.visibility = if (favorite && !active) View.VISIBLE else View.GONE
-        holder.badgeView.text = if (favorite) "● FAVORİ" else ""
-        holder.liveView.visibility = if (active) View.VISIBLE else View.GONE
-        holder.liveView.text = if (active) "●  CANLI YAYIN" else ""
-        holder.favoriteView.setImageResource(if (favorite) R.drawable.ic_heart else R.drawable.ic_heart_outline)
-        holder.favoriteView.setColorFilter(if (favorite) Color.rgb(255,122,0) else Color.WHITE)
-        holder.favoriteView.alpha = if (favorite) 1f else .78f
-        holder.favoriteView.contentDescription = if (favorite) "Favorilerden çıkar" else "Favorilere ekle"
+        holder.fav.setImageResource(if (favorite) R.drawable.ic_heart else R.drawable.ic_heart_outline)
+        holder.fav.setColorFilter(if (favorite) Neon.PINK else Color.WHITE)
+        holder.fav.alpha = if (favorite) 1f else .7f
+        holder.fav.contentDescription = if (favorite) "Favorilerden çıkar" else "Favorilere ekle"
+        holder.fav.setOnClickListener { Ui.pop(it); onFavorite(station) }
+        holder.itemView.setOnClickListener { Ui.pop(it); onClick(station) }
 
-        val cardBackground = holder.itemView.background as GradientDrawable
-        cardBackground.setColor(if (active) Color.rgb(34,27,22) else Color.rgb(27,27,29))
-        cardBackground.setStroke(if (active) 2.dp(context) else 1.dp(context), if (active) Color.rgb(255,122,0) else Color.rgb(48,48,51))
-        holder.itemView.elevation = if (active) 10.dp(context).toFloat() else 2.dp(context).toFloat()
-        holder.logoView.setPlaying(active)
-
-        holder.itemView.setOnClickListener {
-            holder.itemView.animate().cancel()
-            holder.itemView.animate().scaleX(.93f).scaleY(.93f).setDuration(80).setInterpolator(DecelerateInterpolator()).withEndAction {
-                holder.itemView.animate().scaleX(1.015f).scaleY(1.015f).setDuration(120).withEndAction {
-                    holder.itemView.animate().scaleX(1f).scaleY(1f).setDuration(170).start()
-                    onClick(station)
-                }.start()
-            }.start()
-        }
-        holder.favoriteView.setOnClickListener {
-            holder.favoriteView.animate().scaleX(.68f).scaleY(.68f).setDuration(80).withEndAction {
-                holder.favoriteView.animate().scaleX(1.18f).scaleY(1.18f).setDuration(120).withEndAction {
-                    holder.favoriteView.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
-                }.start()
-            }.start()
-            onFavorite(station)
-        }
-
-        holder.itemView.animate().cancel()
-        holder.itemView.alpha = 0f; holder.itemView.translationY = 14.dp(context).toFloat(); holder.itemView.scaleX = .965f; holder.itemView.scaleY = .965f
-        holder.itemView.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
-            .setStartDelay(position.coerceAtMost(7) * 38L).setDuration(300).setInterpolator(DecelerateInterpolator()).start()
-
-        holder.logoAnimator?.cancel()
-        holder.logoAnimator = if (active) {
-            val animator = ValueAnimator.ofFloat(1f, 1.055f, 1f).apply {
-                duration = 1450L; repeatCount = ValueAnimator.INFINITE; interpolator = DecelerateInterpolator()
-                addUpdateListener { holder.logoView.alpha = .88f + ((it.animatedValue as Float) - 1f) * 2.3f; holder.logoView.scaleX = it.animatedValue as Float; holder.logoView.scaleY = it.animatedValue as Float }
-            }
-            animator.start(); animator
-        } else {
-            holder.logoView.alpha = 1f; holder.logoView.scaleX = 1f; holder.logoView.scaleY = 1f; null
+        if (position >= animateFrom) {
+            holder.itemView.alpha = 0f; holder.itemView.translationY = ui.dpf(18f)
+            holder.itemView.animate().alpha(1f).translationY(0f)
+                .setStartDelay((position % 8) * 35L).setDuration(320).setInterpolator(DecelerateInterpolator()).start()
+            animateFrom = position + 1
         }
     }
 
     override fun onViewRecycled(holder: Holder) {
-        holder.itemView.animate().cancel(); holder.logoAnimator?.cancel(); holder.logoAnimator = null
-        holder.itemView.alpha = 1f; holder.itemView.translationY = 0f; holder.itemView.scaleX = 1f; holder.itemView.scaleY = 1f
-        holder.logoView.alpha = 1f; holder.logoView.scaleX = 1f; holder.logoView.scaleY = 1f
+        holder.itemView.animate().cancel()
+        holder.itemView.alpha = 1f; holder.itemView.translationY = 0f
+        holder.logo.setPlaying(false)
         super.onViewRecycled(holder)
     }
 
-    override fun getItemCount() = items.size
-
-    class Holder(view: View, val logoView: StationArtworkView, val titleView: TextView, val metaView: TextView, val badgeView: TextView, val favoriteView: ImageButton, val liveView: TextView) : RecyclerView.ViewHolder(view) {
-        var logoAnimator: ValueAnimator? = null
-    }
+    class Holder(
+        view: View, val logo: StationArtworkView, val title: TextView, val meta: TextView,
+        val live: TextView, val fav: ImageView,
+    ) : RecyclerView.ViewHolder(view)
 }
-
-private fun Int.dp(context: android.content.Context) = (this * context.resources.displayMetrics.density).toInt()

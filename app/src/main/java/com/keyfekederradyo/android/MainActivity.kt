@@ -1,664 +1,774 @@
 package com.keyfekederradyo.android
 
+import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Metadata
-import androidx.media3.extractor.metadata.icy.IcyInfo
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.common.util.concurrent.ListenableFuture
+import java.util.Calendar
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
-    private val bg = Color.rgb(13,13,14)
-    private val surface = Color.rgb(27,27,29)
-    private val surface2 = Color.rgb(35,35,38)
-    private val orange = Color.rgb(255,122,0)
-    private val white = Color.rgb(245,245,247)
-    private val muted = Color.rgb(150,150,155)
+    private val ui by lazy { Ui(this) }
     private val prefs by lazy { getSharedPreferences("radio", MODE_PRIVATE) }
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
-    private val taglines = listOf("Bugün ne açsak? ","Keyfin ne isterse, frekans orada.","Biraz müzik, biraz keyif.","Kafana göre bir radyo bulalım.","Bir Frekans, Bin Keyif.")
-    private var taglineIndex = 0
+
     private var stations = emptyList<Station>()
-    private var currentIndex = -1
-    private var selectedNav = 0
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var nowPlaying = ""
-    private var fullPlayerDialog: android.app.Dialog? = null
-    private var fullPlayerRefresh: (() -> Unit)? = null
+    private var playerError = false
 
-    private lateinit var adapter: StationAdapter
-    private lateinit var homeScroll: ScrollView
-    private lateinit var homeContainer: LinearLayout
-    private lateinit var stationList: RecyclerView
-    private lateinit var search: EditText
-    private lateinit var title: TextView
-    private lateinit var status: TextView
-    private lateinit var liveBadge: TextView
+    private enum class Page { HOME, RADIOS, DISCOVER, FAVORITES, SONGS, LIST }
+    private var page = Page.HOME
+    private var listTitle = ""
+    private var listItems = emptyList<Station>()
+    private var genreFilter: String? = null
+
+    private lateinit var root: FrameLayout
+    private lateinit var ambient: AmbientBackgroundView
     private lateinit var tagline: TextView
-    private lateinit var play: ImageButton
-    private lateinit var spectrum: AudioSpectrumView
-    private lateinit var miniLogo: StationArtworkView
-    private val navCards = mutableListOf<View>()
-    private val navIcons = mutableListOf<ImageView>()
-    private val navLabels = mutableListOf<TextView>()
+    private lateinit var search: EditText
+    private lateinit var scroll: ScrollView
+    private lateinit var scrollContent: LinearLayout
+    private lateinit var listPage: LinearLayout
+    private lateinit var listHeader: LinearLayout
+    private lateinit var stationList: RecyclerView
+    private lateinit var adapter: StationAdapter
+    private lateinit var mini: LinearLayout
+    private lateinit var miniArt: StationArtworkView
+    private lateinit var miniTitle: TextView
+    private lateinit var miniSub: TextView
+    private lateinit var miniSpectrum: AudioSpectrumView
+    private lateinit var miniPlayIcon: ImageView
+    private lateinit var miniPlay: FrameLayout
+    private val navItems = mutableListOf<Triple<View, ImageView, TextView>>()
+    private var fullPlayer: FullPlayerView? = null
+    private var pickSheet: PickSheetView? = null
+
+    private var systemBars = intArrayOf(0, 0, 0, 0)
+    /** Overlays cover the whole window (behind the bars) but keep their content clear of them. */
+    private fun padForBars(view: View) = view.setPadding(systemBars[0], systemBars[1], systemBars[2], systemBars[3])
+
+    private val taglines = listOf("Bir frekans, bin keyif.", "Biraz müzik, biraz keyif.", "Keyfin ne isterse, frekans orada.", "Kafana göre bir radyo bulalım.")
+    private var taglineIndex = 0
+
+    // ---------------------------------------------------------------- lifecycle
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg))
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Neon.BG))
         runCatching { android.net.http.HttpResponseCache.install(java.io.File(cacheDir, "http"), 16L * 1024 * 1024) }
-        val content = buildUi()
-        // Android 15+ draws edge-to-edge: keep the UI clear of the status and navigation bars
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
-            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
-        }
-        setContentView(content)
-        handler.postDelayed(taglineRunnable, 1800L)
+        setContentView(buildUi())
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (fullPlayerDialog?.isShowing == true) {
-                    fullPlayerDialog?.dismiss()
-                } else if (search.visibility == View.VISIBLE) {
-                    search.visibility = View.GONE
-                    search.clearFocus()
-                } else if (selectedNav != 0) {
-                    handleNav(0)
-                } else {
-                    showExitDialog()
-                }
-            }
+            override fun handleOnBackPressed() = goBack()
         })
+        handler.postDelayed(taglineRunnable, 3500)
         connectPlayer()
         loadStations()
     }
 
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        executor.shutdownNow()
+        super.onDestroy()
+    }
+
     private val taglineRunnable = object : Runnable {
         override fun run() {
-            if (isFinishing || isDestroyed) return
-            tagline.animate().alpha(0f).setDuration(160).withEndAction {
-                if (isFinishing || isDestroyed) return@withEndAction
+            tagline.animate().alpha(0f).setDuration(200).withEndAction {
                 taglineIndex = (taglineIndex + 1) % taglines.size
                 tagline.text = taglines[taglineIndex]
-                tagline.animate().alpha(1f).setDuration(240).start()
+                tagline.animate().alpha(1f).setDuration(300).start()
             }.start()
-            handler.postDelayed(this, 3600L)
+            handler.postDelayed(this, 4200)
         }
     }
 
-    private fun buildUi(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
-        }
-        val top = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(d(10), d(7), d(10), d(6))
-        }
-        val brandBox = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, d(62), 1f)
-        }
-        val brand = ImageView(this).apply {
-            setImageResource(R.drawable.keyfe_keder_brand)
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = rounded(Color.rgb(18,18,19), 12)
-            contentDescription = "Keyfe Keder Radyo"
-        }
-        brandBox.addView(brand, LinearLayout.LayoutParams(d(42), d(42)).apply { rightMargin = d(10) })
-        val brandText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        val brandTitle = TextView(this).apply {
-            text = "KEYFE KEDER RADYO"
-            textSize = 14f
-            setTextColor(white)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            letterSpacing = 0.01f
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-        tagline = TextView(this).apply { text = taglines[0]; textSize = 10.5f; setTextColor(orange); alpha = 0.9f }
-        brandText.addView(brandTitle)
-        brandText.addView(tagline)
-        brandBox.addView(brandText, LinearLayout.LayoutParams(0, -2, 1f))
-        val searchButton = iconButton(R.drawable.ic_search)
-        liveBadge = TextView(this).apply {
-            text = "RADYO"; textSize = 10f; setTextColor(muted); gravity = Gravity.CENTER
-            background = rounded(Color.rgb(28,24,21), 14)
-        }
-        val settingsButton = iconButton(R.drawable.ic_settings).apply { contentDescription = "Ayarlar" }
-        settingsButton.setOnClickListener { tap(it); showSettings() }
-        top.addView(brandBox)
-        top.addView(searchButton, LinearLayout.LayoutParams(d(48), d(48)))
-        top.addView(settingsButton, LinearLayout.LayoutParams(d(48), d(48)))
-        top.addView(liveBadge, LinearLayout.LayoutParams(d(64), d(30)).apply { leftMargin = d(2) })
-        root.addView(top)
+    // ---------------------------------------------------------------- layout
 
+    private fun buildUi(): View {
+        root = FrameLayout(this)
+        ambient = AmbientBackgroundView(this)
+        root.addView(ambient, FrameLayout.LayoutParams(-1, -1))
+
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(column, FrameLayout.LayoutParams(-1, -1))
+        // Android 15+ draws edge-to-edge: keep the UI clear of the status and navigation bars
+        ViewCompat.setOnApplyWindowInsetsListener(column) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            systemBars = intArrayOf(bars.left, bars.top, bars.right, bars.bottom)
+            fullPlayer?.let { padForBars(it) }; pickSheet?.let { padForBars(it) }
+            insets
+        }
+
+        column.addView(buildHeader())
         search = EditText(this).apply {
-            hint = "Radyo ara..."; setTextColor(white); setHintTextColor(muted); setSingleLine(true)
-            setPadding(d(16), 0, d(16), 0); background = rounded(surface, 18); visibility = View.GONE
-            addTextChangedListener(object : android.text.TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { filter(s?.toString().orEmpty()) }
-                override fun afterTextChanged(s: android.text.Editable?) = Unit
+            hint = "Radyo, tür ya da şehir ara"; setTextColor(Neon.TEXT); setHintTextColor(Neon.MUTED); textSize = 15f
+            setSingleLine(true); background = ui.glass(18f); setPadding(ui.dp(18), 0, ui.dp(18), 0); visibility = View.GONE
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = searchFor(s?.toString().orEmpty())
+                override fun afterTextChanged(s: Editable?) = Unit
             })
         }
-        root.addView(search, LinearLayout.LayoutParams(-1, d(50)).apply { setMargins(d(10), 0, d(10), d(8)) })
-        searchButton.setOnClickListener { tap(it); search.visibility = if (search.visibility == View.VISIBLE) View.GONE else View.VISIBLE; if (search.visibility == View.VISIBLE) search.requestFocus() }
+        column.addView(search, LinearLayout.LayoutParams(-1, ui.dp(50)).apply { setMargins(ui.dp(16), 0, ui.dp(16), ui.dp(8)) })
 
-        homeScroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; isFillViewport = true; setPadding(d(10),0,d(10),d(8)) }
-        homeContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0,d(4),0,d(18)) }
-        homeScroll.addView(homeContainer, ViewGroup.LayoutParams(-1,-1))
-        root.addView(homeScroll, LinearLayout.LayoutParams(-1,0,1f))
+        val pages = FrameLayout(this)
+        scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS // rebuilt rows must not auto-scroll into view
+        }
+        scrollContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, ui.dp(16)) }
+        scroll.addView(scrollContent)
+        pages.addView(scroll, FrameLayout.LayoutParams(-1, -1))
 
+        listPage = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        listHeader = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        listPage.addView(listHeader)
+        adapter = StationAdapter({ play(it) }, { isFavorite(it) }, { toggleFavorite(it) })
         stationList = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@MainActivity, 2)
-            overScrollMode = View.OVER_SCROLL_NEVER
-            setPadding(d(5),0,d(5),d(8)); clipToPadding = false; visibility = View.GONE
+            this.adapter = this@MainActivity.adapter
+            setPadding(ui.dp(9), 0, ui.dp(9), ui.dp(12)); clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_NEVER; itemAnimator = null
         }
-        adapter = StationAdapter({ play(it) }, { isFavorite(it) }, { toggleFavorite(it) })
-        stationList.adapter = adapter
-        root.addView(stationList, LinearLayout.LayoutParams(-1,0,1f))
-        root.addView(buildMiniPlayer(), LinearLayout.LayoutParams(-1,d(76)).apply { setMargins(d(8),d(4),d(8),d(6)) })
-        root.addView(buildBottomNav(), LinearLayout.LayoutParams(-1,d(68)))
-        buildHome()
+        listPage.addView(stationList, LinearLayout.LayoutParams(-1, 0, 1f))
+        pages.addView(listPage, FrameLayout.LayoutParams(-1, -1))
+        column.addView(pages, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        column.addView(buildMiniPlayer(), LinearLayout.LayoutParams(-1, ui.dp(74)).apply { setMargins(ui.dp(12), ui.dp(6), ui.dp(12), ui.dp(8)) })
+        column.addView(buildNav(), LinearLayout.LayoutParams(-1, ui.dp(66)).apply { setMargins(ui.dp(12), 0, ui.dp(12), ui.dp(8)) })
+        showPage(Page.HOME)
         return root
     }
 
-    private fun buildBottomNav(): View {
-        val nav = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(d(6),d(5),d(6),d(6)); setBackgroundColor(surface) }
-        val items = listOf(R.drawable.ic_home to "Ana Sayfa",R.drawable.ic_radio to "Radyolar",R.drawable.ic_explore to "Keşfet",R.drawable.ic_heart to "Favoriler")
-        items.forEachIndexed { index, pair ->
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true
-                layoutParams = LinearLayout.LayoutParams(0,-1,1f).apply { leftMargin=d(2); rightMargin=d(2) }
-                background = rounded(if(index==0) Color.rgb(44,31,23) else Color.TRANSPARENT, 16)
-                setOnClickListener { tap(this); handleNav(index) }
+    private fun buildHeader(): View {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(16), ui.dp(10), ui.dp(10), ui.dp(10)) }
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.keyfe_keder_brand); scaleType = ImageView.ScaleType.CENTER_CROP
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) = outline.setRoundRect(0, 0, view.width, view.height, ui.dpf(12f))
             }
-            val icon = ImageView(this).apply { setImageResource(pair.first); setColorFilter(if(index==0) orange else muted); layoutParams=LinearLayout.LayoutParams(d(22),d(24)) }
-            val label = TextView(this).apply { text=pair.second; textSize=10.5f; setTextColor(if(index==0)orange else muted); gravity=Gravity.CENTER }
-            card.addView(icon); card.addView(label); nav.addView(card); navCards.add(card); navIcons.add(icon); navLabels.add(label)
+            clipToOutline = true
+        }
+        row.addView(logo, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)).apply { rightMargin = ui.dp(12) })
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(ui.text("Keyfe Keder", 18f, Neon.TEXT, true).apply { letterSpacing = .02f })
+        tagline = ui.text(taglines[0], 12f, Neon.ORANGE)
+        texts.addView(tagline)
+        row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(ui.iconButton(R.drawable.ic_search, "Ara", 44, 22) { toggleSearch() }.apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = ui.dp(8) })
+        row.addView(ui.iconButton(R.drawable.ic_settings, "Ayarlar", 44, 22) { showSettings() })
+        return row
+    }
+
+    private fun buildMiniPlayer(): View {
+        mini = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8))
+            background = ui.glass(24f, fill = 0x2EFFFFFF); isClickable = true
+            setOnClickListener { openFullPlayer() }
+        }
+        miniArt = StationArtworkView(this)
+        mini.addView(miniArt, LinearLayout.LayoutParams(ui.dp(56), ui.dp(56)).apply { rightMargin = ui.dp(12) })
+        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
+        miniTitle = ui.text("Bir radyo seç", 14.5f, Neon.TEXT, true)
+        miniSub = ui.text("Keyfime Bırak'ı dene", 12f, Neon.MUTED)
+        miniSpectrum = AudioSpectrumView(this)
+        info.addView(miniTitle); info.addView(miniSub, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(2) })
+        info.addView(miniSpectrum, LinearLayout.LayoutParams(-1, ui.dp(14)).apply { topMargin = ui.dp(5) })
+        mini.addView(info, LinearLayout.LayoutParams(0, -1, 1f))
+        miniPlayIcon = ImageView(this).apply { setImageResource(R.drawable.ic_play); setColorFilter(Neon.TEXT) }
+        miniPlay = FrameLayout(this).apply {
+            contentDescription = "Çal / duraklat"; isClickable = true
+            addView(miniPlayIcon, FrameLayout.LayoutParams(ui.dp(24), ui.dp(24), Gravity.CENTER))
+            setOnClickListener { Ui.pop(this); togglePlay() }
+        }
+        mini.addView(miniPlay, LinearLayout.LayoutParams(ui.dp(50), ui.dp(50)).apply { leftMargin = ui.dp(8) })
+        mini.addView(ui.iconButton(R.drawable.ic_next, "Sonraki radyo", 44, 22) { next() }.apply { (layoutParams as LinearLayout.LayoutParams).leftMargin = ui.dp(6) })
+        return mini
+    }
+
+    private fun buildNav(): View {
+        val nav = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6)); background = ui.glass(26f, fill = 0x24FFFFFF) }
+        listOf(Triple(R.drawable.ic_home, "Ana Sayfa", Page.HOME), Triple(R.drawable.ic_radio, "Radyolar", Page.RADIOS),
+            Triple(R.drawable.ic_explore, "Keşfet", Page.DISCOVER), Triple(R.drawable.ic_heart, "Favoriler", Page.FAVORITES)).forEach { (icon, label, target) ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true
+                setOnClickListener { Ui.pop(this); search.setText(""); showPage(target) }
+            }
+            val iv = ui.icon(icon, Neon.MUTED, 22)
+            val tv = ui.text(label, 10.5f, Neon.MUTED, true).apply { gravity = Gravity.CENTER }
+            item.addView(iv); item.addView(tv, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(3) })
+            nav.addView(item, LinearLayout.LayoutParams(0, -1, 1f))
+            navItems += Triple(item, iv, tv)
         }
         return nav
     }
 
-    private fun selectNav(index:Int) {
-        selectedNav = index
-        navCards.forEachIndexed { i, card ->
-            val active = i == index
-            card.background = rounded(if(active) Color.rgb(44,31,23) else Color.TRANSPARENT,16)
-            navIcons[i].setColorFilter(if(active) orange else muted)
-            navLabels[i].setTextColor(if(active) orange else muted)
-            card.alpha = if(active) 1f else 0.86f
+    private fun highlightNav() {
+        val active = when (page) { Page.HOME -> 0; Page.RADIOS, Page.LIST -> 1; Page.DISCOVER, Page.SONGS -> 2; Page.FAVORITES -> 3 }
+        navItems.forEachIndexed { i, (item, iv, tv) ->
+            val on = i == active
+            item.background = if (on) ui.glass(20f, Neon.withAlpha(Neon.ORANGE, 70), gradient = intArrayOf(0x40FF7A1A, 0x26FF2E88)) else null
+            iv.setColorFilter(if (on) Neon.ORANGE else Neon.MUTED)
+            tv.setTextColor(if (on) Neon.TEXT else Neon.MUTED)
         }
     }
 
-    private fun handleNav(index:Int) {
-        selectNav(index); search.visibility=View.GONE; search.clearFocus()
-        when(index) {
-            0 -> { stationList.visibility=View.GONE; homeScroll.visibility=View.VISIBLE; buildHome(); homeScroll.scrollTo(0,0) }
-            1 -> showRadios(stations)
-            2 -> { stationList.visibility=View.GONE; homeScroll.visibility=View.VISIBLE; buildDiscover(); homeScroll.scrollTo(0,0) }
-            3 -> showRadios(stations.filter { isFavorite(it) })
+    // ---------------------------------------------------------------- pages
+
+    private fun showPage(target: Page) {
+        page = target
+        highlightNav()
+        when (target) {
+            Page.HOME -> scrollPage { buildHome() }
+            Page.DISCOVER -> scrollPage { buildDiscover() }
+            Page.SONGS -> scrollPage { buildSongs() }
+            Page.RADIOS -> listPage("Tüm radyolar", "${stations.size} canlı yayın", stations, showGenres = true)
+            Page.FAVORITES -> listPage("Favorilerin", "Kalbe dokunduğun radyolar burada", stations.filter { isFavorite(it) }, showGenres = false,
+                empty = "Henüz favorin yok. Bir radyonun kalbine dokun, burada parlasın.")
+            Page.LIST -> listPage(listTitle, "${listItems.size} radyo", listItems, showGenres = false)
         }
     }
 
-    private fun showRadios(list:List<Station>) { homeScroll.visibility=View.GONE; stationList.visibility=View.VISIBLE; adapter.submitList(list); stationList.scrollToPosition(0) }
+    private fun scrollPage(build: () -> Unit) {
+        listPage.visibility = View.GONE; scroll.visibility = View.VISIBLE
+        scrollContent.removeAllViews(); build()
+        scroll.scrollTo(0, 0); scroll.post { scroll.scrollTo(0, 0) }
+        scrollContent.alpha = 0f; scrollContent.translationY = ui.dpf(12f)
+        scrollContent.animate().alpha(1f).translationY(0f).setDuration(280).start()
+    }
+
+    private fun listPage(title: String, subtitle: String, items: List<Station>, showGenres: Boolean, empty: String? = null) {
+        scroll.visibility = View.GONE; listPage.visibility = View.VISIBLE
+        listHeader.removeAllViews()
+        listHeader.addView(ui.text(title, 26f, Neon.TEXT, true).apply { setPadding(ui.dp(20), ui.dp(6), ui.dp(20), 0) })
+        listHeader.addView(ui.text(subtitle, 13f, Neon.MUTED).apply { setPadding(ui.dp(20), ui.dp(4), ui.dp(20), ui.dp(10)) })
+        var shown = items
+        if (showGenres) {
+            val genres = stations.groupingBy { it.genre.ifBlank { "Radyo" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key }
+            val chips = listOf(ui.chip("Tümü", selected = genreFilter == null) { genreFilter = null; showPage(Page.RADIOS) }) +
+                genres.map { g -> ui.chip(g, selected = g == genreFilter) { genreFilter = g; showPage(Page.RADIOS) } }
+            listHeader.addView(ui.chipRow(chips), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(6) })
+            genreFilter?.let { g -> shown = items.filter { it.genre.ifBlank { "Radyo" } == g } }
+        }
+        if (shown.isEmpty() && empty != null) listHeader.addView(ui.empty(empty))
+        adapter.submitList(shown)
+        stationList.scrollToPosition(0)
+    }
 
     private fun buildHome() {
-        homeContainer.removeAllViews()
-        homeContainer.addView(TextView(this).apply{text="Selam ";textSize=13f;setTextColor(orange);setPadding(d(4),d(10),d(4),0)})
-        homeContainer.addView(TextView(this).apply{text="Bugün hangi frekanstasın?";textSize=27f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD);setPadding(d(4),d(2),d(4),0)})
-        homeContainer.addView(TextView(this).apply{text="Canın ne istiyorsa söyle, gerisini ben hallederim. ";textSize=13f;setTextColor(muted);setPadding(d(4),d(4),d(4),d(14))})
-        homeContainer.addView(buildPickerCard())
-        homeContainer.addView(TextView(this).apply{text="Hemen bir mod seç";textSize=18f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD);setPadding(d(4),d(18),d(4),d(8))})
-        val chips=android.widget.HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;overScrollMode=View.OVER_SCROLL_NEVER}
-        val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
-        val moodItems=listOf(R.drawable.ic_moon to "Sakin",R.drawable.ic_heart to "Dertli",R.drawable.ic_bolt to "Enerjik",R.drawable.ic_car to "Yoldayım",R.drawable.ic_coffee to "Kafamı dinliyorum")
-        moodItems.forEach{(iconRes,label)->
-            val chip=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER;setPadding(d(13),0,d(15),0);background=rounded(surface2,20);isClickable=true;setOnClickListener{tap(this);showMood(label)}}
-            chip.addView(ImageView(this).apply{setImageResource(iconRes);setColorFilter(white);layoutParams=LinearLayout.LayoutParams(d(18),d(20)).apply{rightMargin=d(7)}})
-            chip.addView(TextView(this).apply{text=label;textSize=12f;setTextColor(white);gravity=Gravity.CENTER})
-            row.addView(chip,LinearLayout.LayoutParams(-2,d(42)).apply{rightMargin=d(8)})
-        }
-        chips.addView(row,ViewGroup.LayoutParams(-2,d(46)));homeContainer.addView(chips,LinearLayout.LayoutParams(-1,d(52)))
-        addSection("Son dinlediklerin",historyStations(),"Henüz birlikte bir radyo dinlemedik.")
-        addSection("Kalbini bıraktıkların",stations.filter{isFavorite(it)}.take(10),"Buraya sevdiğin radyoları atalım. Kalbe dokun yeter.")
-        addSection("Bizim seçimlerimiz",stations.filter{it.genre.isNotBlank()}.take(10),"Birazdan sana güzel frekanslar çıkarırım.")
-    }
-    private fun buildPickerCard():View {
-        val card=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL; setPadding(d(14),d(12),d(10),d(12)); background=GradientDrawable().apply { setColor(Color.rgb(39,27,20)); cornerRadius=d(24).toFloat(); setStroke(d(1),Color.rgb(105,58,28)) }; setOnClickListener { tap(this); pickForMe() } }
-        card.addView(ImageView(this).apply { setImageResource(R.drawable.ic_shuffle); setColorFilter(orange); scaleType=ImageView.ScaleType.CENTER_INSIDE; contentDescription="Rastgele radyo" },LinearLayout.LayoutParams(d(58),d(62)))
-        val info=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER_VERTICAL; layoutParams=LinearLayout.LayoutParams(0,-2,1f) }
-        info.addView(TextView(this).apply { text="KEYFİME BIRAK"; textSize=16f; setTextColor(white); setTypeface(typeface,android.graphics.Typeface.BOLD); letterSpacing=0.04f })
-        info.addView(TextView(this).apply { text="Ben bir frekans bulayım, kararı sen ver."; textSize=11f; setTextColor(Color.rgb(204,166,136)) })
-        card.addView(info); card.addView(TextView(this).apply { text="›"; textSize=30f; setTextColor(orange); gravity=Gravity.CENTER },LinearLayout.LayoutParams(d(30),d(56))); return card
-    }
+        val c = scrollContent
+        c.addView(ui.label(greeting()).apply { setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0) })
+        c.addView(ui.text("Bugün hangi frekanstasın?", 28f, Neon.TEXT, true, lines = 2).apply { setPadding(ui.dp(20), ui.dp(6), ui.dp(20), 0) })
+        c.addView(heroPickCard(), LinearLayout.LayoutParams(-1, ui.dp(112)).apply { setMargins(ui.dp(16), ui.dp(18), ui.dp(16), ui.dp(4)) })
 
-    private fun showMood(mood:String) {
-        if(stations.isEmpty()){android.widget.Toast.makeText(this,"Radyolar henüz yükleniyor.",android.widget.Toast.LENGTH_SHORT).show();return}
-        val list=RadioMoodMatcher.rank(stations,mood)
-        if(list.isEmpty()) android.widget.Toast.makeText(this,"Bu moda uygun radyo bulamadım. Keyfime Bırak'ı dene.",android.widget.Toast.LENGTH_SHORT).show() else {showRadios(list);selectNav(1)}
-    }
+        c.addView(ui.sectionHeader("Hemen bir mod seç"))
+        c.addView(ui.chipRow(moodChips()))
 
-    private fun pickForMe() {
-        if(isFinishing||isDestroyed)return
-        if(stations.isEmpty()){android.widget.Toast.makeText(this,"Radyolar henüz yükleniyor.",android.widget.Toast.LENGTH_SHORT).show();return}
-        val history=prefs.getString("history","").orEmpty().split("|").filter{it.isNotBlank()}.toSet(); val recent=history.take(4).toSet()
-        val pool=stations.filter{it.resolvedUrl !in recent}.ifEmpty{stations}; if(pool.isEmpty())return
-        val chosen=pool.filter{it.resolvedUrl!=stations.getOrNull(currentIndex)?.resolvedUrl}.randomOrNull() ?: pool.random()
-        showPickResult(chosen,stations.any{isFavorite(it)})
-    }
+        val recent = historyStations()
+        c.addView(ui.sectionHeader("Son dinlediklerin"))
+        if (recent.isEmpty()) c.addView(ui.empty("Henüz birlikte bir radyo dinlemedik. Keyfime Bırak'a bir dokun.")) else c.addView(cardRow(recent))
 
-    private fun showPickResult(station:Station,hasFavorites:Boolean) {
-        if(isFinishing||isDestroyed)return
-
-        val meta=listOf(station.genre,station.country).filter{it.isNotBlank()}.joinToString(" • ")
-        val reason=if(isFavorite(station))"Favorilerinden sana bir seçim." else if(hasFavorites)"Favorilerine farklı bir alternatif." else "Daha önce sıkmadığın bir frekans."
-
-        val dialog=android.app.Dialog(this)
-        dialog.window?.setDimAmount(.78f)
-
-        val root=LinearLayout(this).apply{
-            orientation=LinearLayout.VERTICAL
-            setPadding(d(18),d(12),d(18),d(18))
-            background=GradientDrawable().apply{
-                setColor(Color.rgb(20,20,22))
-                cornerRadii=floatArrayOf(
-                    d(28).toFloat(),d(28).toFloat(),
-                    d(28).toFloat(),d(28).toFloat(),
-                    d(0).toFloat(),d(0).toFloat(),
-                    d(0).toFloat(),d(0).toFloat()
-                )
-                setStroke(d(1),Color.rgb(66,46,34))
-            }
+        val songs = SongHistory.all(this).take(4)
+        if (songs.isNotEmpty()) {
+            c.addView(ui.sectionHeader("Az önce çalan şarkılar", "Tümü") { showPage(Page.SONGS) })
+            songs.forEach { c.addView(songRow(it)) }
         }
 
-        val handle=View(this).apply{background=rounded(Color.rgb(88,78,72),3)}
-        root.addView(handle,LinearLayout.LayoutParams(d(48),d(5)).apply{gravity=Gravity.CENTER;bottomMargin=d(14)})
+        val favs = stations.filter { isFavorite(it) }
+        c.addView(ui.sectionHeader("Favorilerin", if (favs.size > 6) "Tümü" else null) { showPage(Page.FAVORITES) })
+        if (favs.isEmpty()) c.addView(ui.empty("Sevdiğin radyoların kalbine dokun, buraya gelsinler.")) else c.addView(cardRow(favs.take(12)))
 
-        val title=TextView(this).apply{
-            text="BUGÜNÜN FREKANSI"
-            textSize=11f
-            setTextColor(orange)
-            typeface=android.graphics.Typeface.DEFAULT_BOLD
-            letterSpacing=.10f
-            gravity=Gravity.CENTER
+        c.addView(ui.sectionHeader("Türler"))
+        c.addView(ui.chipRow(genreChips()))
+
+        val daily = stations.filter { it.logoUrl.isNotBlank() }.shuffled(java.util.Random(dayOfYear().toLong())).take(10)
+        if (daily.isNotEmpty()) {
+            c.addView(ui.sectionHeader("Bugünün seçkisi"))
+            c.addView(cardRow(daily))
         }
-        root.addView(title,LinearLayout.LayoutParams(-1,d(30)))
-
-        val art=StationArtworkView(this).apply{
-            background=rounded(Color.rgb(14,14,16),24)
-            clipToOutline=true
-            bind(station.name,station.genre,station.logoUrl)
-        }
-        root.addView(art,LinearLayout.LayoutParams(d(190),d(150)).apply{
-            gravity=Gravity.CENTER
-            bottomMargin=d(12)
-        })
-
-        root.addView(TextView(this).apply{
-            text=station.name
-            textSize=22f
-            setTextColor(white)
-            gravity=Gravity.CENTER
-            setTypeface(typeface,android.graphics.Typeface.BOLD)
-            maxLines=2
-        },LinearLayout.LayoutParams(-1,d(54)))
-
-        root.addView(TextView(this).apply{
-            text=meta.ifBlank{"CANLI RADYO"}
-            textSize=11f
-            setTextColor(muted)
-            gravity=Gravity.CENTER
-        },LinearLayout.LayoutParams(-1,d(28)))
-
-        val reasonBox=LinearLayout(this).apply{
-            orientation=LinearLayout.HORIZONTAL
-            gravity=Gravity.CENTER_VERTICAL
-            setPadding(d(14),d(10),d(14),d(10))
-            background=rounded(Color.rgb(31,25,22),18)
-        }
-        reasonBox.addView(TextView(this).apply{
-            text="Seçim"
-            textSize=17f
-            setTextColor(orange)
-            gravity=Gravity.CENTER
-        },LinearLayout.LayoutParams(d(30),d(38)))
-        reasonBox.addView(TextView(this).apply{
-            text=reason
-            textSize=11f
-            setTextColor(Color.rgb(214,203,196))
-            maxLines=2
-        },LinearLayout.LayoutParams(0,d(44),1f))
-        root.addView(reasonBox,LinearLayout.LayoutParams(-1,d(64)).apply{bottomMargin=d(12)})
-
-        val listen=TextView(this).apply{
-            text="▶   ŞİMDİ DİNLE"
-            textSize=13f
-            setTextColor(Color.WHITE)
-            gravity=Gravity.CENTER
-            typeface=android.graphics.Typeface.DEFAULT_BOLD
-            background=GradientDrawable().apply{setColor(orange);cornerRadius=d(20).toFloat()}
-            isClickable=true
-            setOnClickListener{tap(this);dialog.dismiss();play(station)}
-        }
-        root.addView(listen,LinearLayout.LayoutParams(-1,d(52)).apply{bottomMargin=d(8)})
-
-        val secondary=LinearLayout(this).apply{gravity=Gravity.CENTER}
-        val another=TextView(this).apply{
-            text="Rastgele  BAŞKA BİR TANE"
-            textSize=11f
-            setTextColor(muted)
-            gravity=Gravity.CENTER
-            setPadding(d(16),0,d(16),0)
-            isClickable=true
-            setOnClickListener{
-                tap(this)
-                dialog.dismiss()
-                handler.postDelayed({if(!isFinishing&&!isDestroyed)pickForMe()},180L)
-            }
-        }
-        val close=TextView(this).apply{
-            text="KAPAT"
-            textSize=11f
-            setTextColor(muted)
-            gravity=Gravity.CENTER
-            setPadding(d(16),0,d(16),0)
-            isClickable=true
-            setOnClickListener{tap(this);dialog.dismiss()}
-        }
-        secondary.addView(another,LinearLayout.LayoutParams(0,d(44),1f))
-        secondary.addView(close,LinearLayout.LayoutParams(0,d(44),1f))
-        root.addView(secondary,LinearLayout.LayoutParams(-1,d(44)))
-
-        dialog.setContentView(root)
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        dialog.setCanceledOnTouchOutside(true)
-        dialog.show()
-        dialog.window?.setLayout(-1,(resources.displayMetrics.heightPixels*.78f).toInt())
     }
 
     private fun buildDiscover() {
-        homeContainer.removeAllViews()
-        homeContainer.addView(TextView(this).apply { text="Biraz kurcalayalım mı? Akıcı"; textSize=25f; setTextColor(white); setTypeface(typeface,android.graphics.Typeface.BOLD); setPadding(d(4),d(12),d(4),0) })
-        homeContainer.addView(TextView(this).apply { text="Burada yeni frekanslar buluyoruz. Hep aynı radyoda takılmak yok. "; textSize=13f; setTextColor(muted); setPadding(d(4),d(4),d(4),d(16)) })
-        homeContainer.addView(TextView(this).apply { text="Ruh haline göre"; textSize=18f; setTextColor(white); setTypeface(typeface,android.graphics.Typeface.BOLD); setPadding(d(4),d(8),d(4),d(8)) })
-        val sc=android.widget.HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;overScrollMode=View.OVER_SCROLL_NEVER}
-        val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
-        listOf("Sakin","Dertli","Enerjik","Gece","Yolculuk").forEach{label->
-            val chip=TextView(this).apply{text=label;textSize=12f;setTextColor(white);gravity=Gravity.CENTER;setPadding(d(15),0,d(15),0);background=rounded(surface2,20);setOnClickListener{tap(this);discoverFilter(label)}}
-            row.addView(chip,LinearLayout.LayoutParams(-2,d(42)).apply{rightMargin=d(8)})
-        }
-        sc.addView(row,ViewGroup.LayoutParams(-2,d(46)));homeContainer.addView(sc,LinearLayout.LayoutParams(-1,d(52)))
-        val history=prefs.getString("history","").orEmpty().split("|").filter{it.isNotBlank()}.toSet()
-        addSection("Daha önce dinlemediklerin",stations.filter{it.resolvedUrl !in history}.shuffled().take(10),"Hepsini denemişsin. O zaman Keyfime Bırak'a teslim ol. ")
-        addSection("Rastgele Bugün ben seçtim",stations.shuffled().take(10),"Radyoları çekiyoruz, az sonra burada olur. ")
+        val c = scrollContent
+        c.addView(ui.text("Keşfet", 28f, Neon.TEXT, true).apply { setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0) })
+        c.addView(ui.text("Hep aynı frekansta takılmak yok. Yeni sesler bulalım.", 13.5f, Neon.MUTED, lines = 2).apply { setPadding(ui.dp(20), ui.dp(6), ui.dp(20), 0) })
+        c.addView(ui.sectionHeader("Ruh haline göre"))
+        c.addView(ui.chipRow(moodChips()))
+        c.addView(ui.sectionHeader("Türler"))
+        c.addView(genreGrid())
+        val history = prefs.getString("history", "").orEmpty().split("|").toSet()
+        val fresh = stations.filter { it.resolvedUrl !in history }.shuffled().take(10)
+        c.addView(ui.sectionHeader("Daha önce dinlemediklerin"))
+        if (fresh.isEmpty()) c.addView(ui.empty("Hepsini denemişsin! O zaman Keyfime Bırak'a teslim ol.")) else c.addView(cardRow(fresh))
+        val songs = SongHistory.all(this)
+        c.addView(ui.sectionHeader("Şarkı geçmişin", if (songs.isNotEmpty()) "Aç" else null) { showPage(Page.SONGS) })
+        if (songs.isEmpty()) c.addView(ui.empty("Radyoda çalan şarkılar burada birikecek."))
+        else songs.take(3).forEach { c.addView(songRow(it)) }
     }
 
-    private fun discoverFilter(filter:String) {
-        val rx=when(filter){
-            "Sakin"->Regex("chill|lounge|jazz|classical|easy",RegexOption.IGNORE_CASE)
-            "Dertli"->Regex("arabesk|fantazi|damar|slow",RegexOption.IGNORE_CASE)
-            "Enerjik"->Regex("pop|hit|top|dance",RegexOption.IGNORE_CASE)
-            "Gece"->Regex("night|gece|chill|lounge|slow",RegexOption.IGNORE_CASE)
-            else->Regex("road|drive|80|90",RegexOption.IGNORE_CASE)
-        }
-        val list=stations.filter{"${it.genre} ${it.name}".contains(rx)}
-        if(list.isEmpty()) android.widget.Toast.makeText(this,"Bu köşede şu an pek radyo yok. Başka birine bakalım. ",android.widget.Toast.LENGTH_SHORT).show() else {showRadios(list);selectNav(1)}
-    }
-    private fun addSection(name:String,list:List<Station>,empty:String){
-        homeContainer.addView(TextView(this).apply{text=name;textSize=18f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD);setPadding(d(4),d(18),d(4),d(8))})
-        if(list.isEmpty()){homeContainer.addView(TextView(this).apply{text=empty;textSize=12f;setTextColor(muted);setPadding(d(8),0,d(8),0)},LinearLayout.LayoutParams(-1,d(42)));return}
-        val scroll=android.widget.HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;overScrollMode=View.OVER_SCROLL_NEVER}; val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
-        list.forEach{st->row.addView(homeCard(st),LinearLayout.LayoutParams(d(154),d(176)).apply{rightMargin=d(10)})};scroll.addView(row,ViewGroup.LayoutParams(-2,d(180)));homeContainer.addView(scroll,LinearLayout.LayoutParams(-1,d(184)))
-    }
-
-    private fun homeCard(station:Station):View {
-        val card=FrameLayout(this).apply {
-            background=GradientDrawable().apply{
-                setColor(surface2)
-                cornerRadius=d(24).toFloat()
-                setStroke(d(1),Color.rgb(52,45,41))
-            }
-            isClickable=true
-            isFocusable=true
-            elevation=d(4).toFloat()
-            setOnClickListener{tap(this);play(station)}
-        }
-
-        val glow=View(this).apply{
-            background=GradientDrawable().apply{
-                setColor(Color.rgb(49,28,17))
-                cornerRadius=d(28).toFloat()
-                setStroke(d(1),Color.rgb(103,61,31))
-            }
-            alpha=0.72f
-        }
-        card.addView(glow,FrameLayout.LayoutParams(-1,-1).apply{
-            leftMargin=d(4);rightMargin=d(4);topMargin=d(4);bottomMargin=d(-1)
+    private fun buildSongs() {
+        val c = scrollContent
+        val songs = SongHistory.all(this)
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(20), ui.dp(8), ui.dp(12), 0) }
+        head.addView(ui.text("Şarkı geçmişi", 28f, Neon.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+        if (songs.isNotEmpty()) head.addView(ui.iconButton(R.drawable.ic_trash, "Geçmişi temizle", 44, 20) {
+            AlertDialog.Builder(this).setMessage("Şarkı geçmişi silinsin mi?")
+                .setPositiveButton("Sil") { _, _ -> SongHistory.clear(this); showPage(Page.SONGS) }
+                .setNegativeButton("Vazgeç", null).show()
         })
-        val artwork=StationArtworkView(this).apply{
-            bind(station.name,station.genre,station.logoUrl)
-            setPlaying(station.resolvedUrl==controller?.currentMediaItem?.mediaId&&controller?.isPlaying==true)
-        }
-        // Cover sits in the upper part of the card; name and genre stay readable below it
-        card.addView(artwork,FrameLayout.LayoutParams(d(100),d(100)).apply{gravity=Gravity.TOP or Gravity.CENTER_HORIZONTAL;topMargin=d(12)})
+        c.addView(head)
+        c.addView(ui.text("Radyoda duyduğun şarkılar. Birine dokun, Spotify ya da YouTube'da bul.", 13f, Neon.MUTED, lines = 2).apply { setPadding(ui.dp(20), ui.dp(6), ui.dp(20), ui.dp(12)) })
+        if (songs.isEmpty()) c.addView(ui.empty("Henüz şarkı yakalamadık. Şarkı bilgisi gönderen radyolarda burası dolacak."))
+        songs.forEach { c.addView(songRow(it)) }
+    }
 
-        val shade=View(this).apply{
-            background=android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(0x00101012,0x10101012,0xE80B0B0D.toInt())
-            )
-            isClickable=false
-        }
-        card.addView(shade,FrameLayout.LayoutParams(-1,-1))
+    // ---------------------------------------------------------------- building blocks
 
-        val top=LinearLayout(this).apply{
-            gravity=Gravity.TOP or Gravity.END
-            setPadding(d(10),d(9),d(10),0)
+    private fun heroPickCard(): View {
+        val card = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(18), ui.dp(14), ui.dp(16), ui.dp(14)); isClickable = true
+            background = ui.glass(28f, Neon.withAlpha(Neon.ORANGE, 110), gradient = intArrayOf(0x66FF7A1A, 0x4DFF2E88, 0x268B5CFF))
+            setOnClickListener { Ui.pop(this); openPick() }
         }
-        val favorite=ImageButton(this).apply{
-            setImageResource(if(isFavorite(station)) R.drawable.ic_heart else R.drawable.ic_heart_outline)
-            setColorFilter(if(isFavorite(station)) orange else white)
-            setBackgroundColor(Color.TRANSPARENT)
-            setPadding(d(7),d(7),d(7),d(7))
-            contentDescription=if(isFavorite(station)) "Favorilerden çıkar" else "Favorilere ekle"
-            setOnClickListener{
-                tap(it)
-                toggleFavorite(station)
-            }
+        val badge = FrameLayout(this).apply {
+            background = GlassDrawable(this@MainActivity, 26f, Neon.ORANGE, 0x55FFFFFF, Neon.withAlpha(Neon.ORANGE, 160), intArrayOf(Neon.ORANGE, Neon.PINK))
+            addView(ui.icon(R.drawable.ic_shuffle, Neon.TEXT, 26), FrameLayout.LayoutParams(ui.dp(26), ui.dp(26), Gravity.CENTER))
         }
-        top.addView(favorite,LinearLayout.LayoutParams(d(36),d(36)))
-        card.addView(top,FrameLayout.LayoutParams(-1,d(46)).apply{gravity=Gravity.TOP})
-
-        val bottom=LinearLayout(this).apply{
-            orientation=LinearLayout.VERTICAL
-            setPadding(d(13),0,d(13),d(12))
-        }
-        val live=TextView(this).apply{
-            text="●  CANLI"
-            textSize=9.5f
-            setTextColor(orange)
-            typeface=android.graphics.Typeface.DEFAULT_BOLD
-            visibility=if(station.resolvedUrl==controller?.currentMediaItem?.mediaId)View.VISIBLE else View.GONE
-        }
-        val name=TextView(this).apply{
-            text=station.name
-            textSize=15f
-            setTextColor(white)
-            setTypeface(typeface,android.graphics.Typeface.BOLD)
-            maxLines=1
-            ellipsize=android.text.TextUtils.TruncateAt.END
-        }
-        val meta=TextView(this).apply{
-            text=listOf(station.genre,station.country).filter{it.isNotBlank()}.joinToString(" • ").ifBlank{"Canlı radyo"}
-            textSize=10.5f
-            setTextColor(0xD0FFFFFF.toInt())
-            maxLines=1
-            ellipsize=android.text.TextUtils.TruncateAt.END
-        }
-        bottom.addView(live,LinearLayout.LayoutParams(-1,d(18)))
-        bottom.addView(name,LinearLayout.LayoutParams(-1,d(26)))
-        bottom.addView(meta,LinearLayout.LayoutParams(-1,d(20)))
-        card.addView(bottom,FrameLayout.LayoutParams(-1,d(70)).apply{gravity=Gravity.BOTTOM})
-
+        card.addView(badge, LinearLayout.LayoutParams(ui.dp(58), ui.dp(58)).apply { rightMargin = ui.dp(16) })
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(ui.text("Keyfime bırak", 20f, Neon.TEXT, true))
+        texts.addView(ui.text(pickSubtitle(), 13f, 0xFFFFE2CC.toInt(), lines = 2), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+        card.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(ui.icon(R.drawable.ic_chevron_down, Neon.TEXT, 26).apply { rotation = -90f })
         return card
     }
 
-    private fun buildMiniPlayer():View {
-        val row=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(d(10),d(7),d(8),d(7));background=rounded(surface2,24);elevation=d(8).toFloat();setOnClickListener{if(currentIndex>=0&&!isFinishing&&!isDestroyed)showFullPlayer()}}
-        miniLogo=StationArtworkView(this).apply{layoutParams=LinearLayout.LayoutParams(d(50),d(50)).apply{rightMargin=d(9)};bind("RADYO","")}
-        val info=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL;layoutParams=LinearLayout.LayoutParams(0,-2,1f)}
-        title=TextView(this).apply{text="Bir radyo seç";textSize=14f;setTextColor(white);maxLines=1};status=TextView(this).apply{text="Hazır";textSize=11f;setTextColor(muted);maxLines=1};spectrum=AudioSpectrumView(this).apply{layoutParams=LinearLayout.LayoutParams(-1,d(16))}
-        info.addView(title);info.addView(status);info.addView(spectrum)
-        val prev=iconButton(R.drawable.ic_prev); play=iconButton(R.drawable.ic_play); val next=iconButton(R.drawable.ic_next)
-        prev.setOnClickListener{tap(it);playRelative(-1)};play.setOnClickListener{tap(it);togglePlay()};next.setOnClickListener{tap(it);playRelative(1)}
-        row.addView(miniLogo);row.addView(info);row.addView(prev);row.addView(play);row.addView(next);return row
+    private fun moodChips() = listOf(
+        R.drawable.ic_moon to "Sakin", R.drawable.ic_heart to "Dertli", R.drawable.ic_bolt to "Enerjik",
+        R.drawable.ic_car to "Yoldayım", R.drawable.ic_coffee to "Kafamı dinliyorum"
+    ).map { (icon, mood) -> ui.chip(mood, icon) { showMood(mood) } }
+
+    private fun genreChips(): List<View> = stations.groupingBy { it.genre.ifBlank { "Radyo" } }.eachCount().entries
+        .sortedByDescending { it.value }.map { (genre, count) -> ui.chip("$genre  $count") { genreFilter = genre; showPage(Page.RADIOS) } }
+
+    private fun genreGrid(): View {
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(12), 0, ui.dp(12), 0) }
+        val genres = stations.groupingBy { it.genre.ifBlank { "Radyo" } }.eachCount().entries.sortedByDescending { it.value }.take(8)
+        genres.chunked(2).forEach { pair ->
+            val row = LinearLayout(this)
+            pair.forEach { (genre, count) ->
+                val accent = StationArtworkView.accentFor(genre)
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(ui.dp(16), ui.dp(12), ui.dp(12), ui.dp(14)); isClickable = true
+                    background = ui.glass(22f, Neon.withAlpha(accent, 70), gradient = intArrayOf(Neon.withAlpha(accent, 140), Neon.withAlpha(accent, 40), 0x0DFFFFFF))
+                    setOnClickListener { Ui.pop(this); genreFilter = genre; showPage(Page.RADIOS) }
+                }
+                tile.addView(ui.text(genre, 17f, Neon.TEXT, true))
+                tile.addView(ui.text("$count radyo", 12f, 0xCCFFFFFF.toInt()))
+                row.addView(tile, LinearLayout.LayoutParams(0, ui.dp(96), 1f).apply { setMargins(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4)) })
+            }
+            if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            grid.addView(row)
+        }
+        return grid
     }
 
-    private fun connectPlayer(){
-        val token=SessionToken(this,ComponentName(this,RadioPlaybackService::class.java));controllerFuture=MediaController.Builder(this,token).buildAsync()
-        controllerFuture?.addListener({
-            try{
-                controller=controllerFuture?.get()
-                controller?.addListener(object:androidx.media3.common.Player.Listener{
-                    private fun refresh(){
-                        if(isFinishing||isDestroyed)return
-                        val p=controller?:return;val playing=p.isPlaying
-                        play.setImageResource(if(playing)R.drawable.ic_pause else R.drawable.ic_play);spectrum.setPlaying(playing);miniLogo.setPlaying(playing)
-                        status.text=when{p.playbackState==androidx.media3.common.Player.STATE_BUFFERING->"Bağlanıyor...";playing->if(nowPlaying.isNotBlank())nowPlaying else "CANLI • "+title.text;p.playbackState==androidx.media3.common.Player.STATE_READY->"Durduruldu";else->"Hazır"}
-                        liveBadge.text=when{playing->"● CANLI";p.playbackState==androidx.media3.common.Player.STATE_BUFFERING->"BAĞLANIYOR";else->"RADYO"};liveBadge.setTextColor(if(playing||p.playbackState==androidx.media3.common.Player.STATE_BUFFERING)orange else muted);fullPlayerRefresh?.invoke()
-                    }
-                    override fun onIsPlayingChanged(isPlaying:Boolean)=refresh()
-                    override fun onPlaybackStateChanged(playbackState:Int)=refresh()
-                    override fun onMediaItemTransition(item:MediaItem?,reason:Int){title.text=item?.mediaMetadata?.title?:"Bir radyo seç";syncCurrentStation();refresh()}
-                    override fun onMetadata(metadata:Metadata){for(i in 0 until metadata.length()){(metadata.get(i)as?IcyInfo)?.title?.trim()?.takeIf{it.isNotBlank()}?.let{raw->nowPlaying=formatNowPlaying(raw);if(!isFinishing&&!isDestroyed)status.text=nowPlaying;fullPlayerRefresh?.invoke()}}}
-                    override fun onPlayerError(error:androidx.media3.common.PlaybackException){nowPlaying="";if(!isFinishing&&!isDestroyed){status.text="Bu yayın açılmadı. Başka bir frekans deneyelim. ";spectrum.setPlaying(false);miniLogo.setPlaying(false);liveBadge.text="RADYO";liveBadge.setTextColor(muted);fullPlayerRefresh?.invoke()}}
-                })
-                syncCurrentStation()
-            }catch(_:Exception){if(!isFinishing&&!isDestroyed)status.text="Müzik kutusunu açamadım. Bir daha deneyelim. "}
-        },ContextCompat.getMainExecutor(this))
-    }
-
-    private fun syncCurrentStation(){
-        val p=controller?:return;val item=p.currentMediaItem?:return;val index=stations.indexOfFirst{it.resolvedUrl==item.mediaId}
-        if(index>=0){currentIndex=index;title.text=stations[index].name;miniLogo.bind(stations[index].name,stations[index].genre,stations[index].logoUrl);miniLogo.setPlaying(p.isPlaying);spectrum.setStationSeed(stations[index].name.hashCode())}
-        play.setImageResource(if(p.isPlaying)R.drawable.ic_pause else R.drawable.ic_play);spectrum.setPlaying(p.isPlaying);fullPlayerRefresh?.invoke()
-    }
-    private fun togglePlay(){controller?.let{if(it.isPlaying)it.pause()else it.play()}}
-    private fun formatNowPlaying(raw:String):String{val cleaned=raw.replace(Regex("\\s+")," ").trim();val parts=cleaned.split(Regex("\\s+[-–—/]\\s+|\\|"),limit=2);return if(parts.size==2)parts[0].trim()+" • "+parts[1].trim()else cleaned}
-    private fun playRelative(delta:Int){if(stations.isEmpty())return;currentIndex=if(currentIndex<0)0 else(currentIndex+delta+stations.size)%stations.size;play(stations[currentIndex])}
-    private fun play(station:Station){
-        if(isFinishing||isDestroyed)return
-        rememberStation(station);currentIndex=stations.indexOfFirst{it.resolvedUrl==station.resolvedUrl}.coerceAtLeast(0)
-        val metadata=androidx.media3.common.MediaMetadata.Builder().setTitle(station.name).setArtist("Keyfe Keder Radyo").setAlbumTitle("Canlı Yayın").setArtworkUri(Uri.parse("android.resource://$packageName/drawable/station_artwork_default")).build()
-        val item=MediaItem.Builder().setMediaId(station.resolvedUrl).setUri(station.resolvedUrl).setMediaMetadata(metadata).build()
-        try{controller?.setMediaItem(item);controller?.prepare();controller?.play()}catch(_:Exception){status.text="Bu radyoya bağlanamadık. Başka birini deneyelim. ";return}
-        title.text=station.name;nowPlaying="";status.text="Bağlanıyor...";liveBadge.text="BAĞLANIYOR";liveBadge.setTextColor(orange);miniLogo.bind(station.name,station.genre,station.logoUrl);miniLogo.setPlaying(true);spectrum.setStationSeed(station.name.hashCode());spectrum.restart();fullPlayerRefresh?.invoke()
-    }
-    private fun filter(query:String){val q=query.trim();val list=if(q.isBlank())stations else stations.filter{it.name.contains(q,true)||it.genre.contains(q,true)||it.country.contains(q,true)||it.language.contains(q,true)};if(selectedNav==0){showRadios(list);selectNav(1)}else adapter.submitList(list)}
-    private fun loadStations(){
-        val repo=StationRepository(applicationContext)
-        executor.execute{
-            // Show the cached/bundled list immediately, then swap in the fresh one if it downloads
-            runCatching{repo.loadLocal()}.getOrNull()?.let{local->runOnUiThread{applyStations(local)}}
-            runCatching{repo.refresh()}.getOrNull()?.let{fresh->runOnUiThread{applyStations(fresh)}}
+    private fun cardRow(list: List<Station>): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(ui.dp(14), ui.dp(4), ui.dp(14), ui.dp(10)) }
+        val playing = controller?.currentMediaItem?.mediaId
+        list.forEach { st ->
+            val active = st.resolvedUrl == playing && controller?.isPlaying == true
+            val accent = StationArtworkView.accentFor(st.genre)
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(ui.dp(12), ui.dp(14), ui.dp(12), ui.dp(12)); isClickable = true
+                background = if (active) ui.glass(24f, Neon.withAlpha(accent, 150), gradient = intArrayOf(Neon.withAlpha(accent, 70), 0x26FF2E88)) else ui.glass(24f)
+                setOnClickListener { Ui.pop(this); play(st) }
+                setOnLongClickListener { toggleFavorite(st); true }
+            }
+            val art = StationArtworkView(this).apply { bind(st.name, st.genre, st.logoUrl); setPlaying(active) }
+            card.addView(art, LinearLayout.LayoutParams(ui.dp(108), ui.dp(108)).apply { bottomMargin = ui.dp(10) })
+            card.addView(ui.text(st.name, 13.5f, Neon.TEXT, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
+            card.addView(ui.text(st.genre.ifBlank { "Radyo" }, 11.5f, Neon.MUTED).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(3) })
+            row.addView(card, LinearLayout.LayoutParams(ui.dp(146), ui.dp(186)).apply { setMargins(ui.dp(5), ui.dp(4), ui.dp(5), ui.dp(4)) })
+        }
+        return android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(row)
         }
     }
-    private fun applyStations(loaded:List<Station>){
-        if(isFinishing||isDestroyed||loaded.isEmpty()||loaded==stations)return
-        stations=loaded
-        when(selectedNav){0->buildHome();1->if(search.text.isNullOrBlank())adapter.submitList(loaded) else filter(search.text.toString());2->buildDiscover();3->showRadios(loaded.filter{isFavorite(it)})}
-        syncCurrentStation()
-    }
-    private fun historyStations():List<Station>{val urls=prefs.getString("history","").orEmpty().split("|").filter{it.isNotBlank()};return urls.mapNotNull{url->stations.firstOrNull{it.resolvedUrl==url}}.take(10)}
-    private fun rememberStation(station:Station){val urls=prefs.getString("history","").orEmpty().split("|").filter{it.isNotBlank()&&it!=station.resolvedUrl}.toMutableList();urls.add(0,station.resolvedUrl);prefs.edit().putString("history",urls.take(12).joinToString("|")).apply()}
-    private fun isFavorite(station:Station)=prefs.getBoolean(station.resolvedUrl,false)
-    private fun toggleFavorite(station:Station){prefs.edit().putBoolean(station.resolvedUrl,!isFavorite(station)).apply();adapter.notifyDataSetChanged();if(selectedNav==0)buildHome();if(selectedNav==3)showRadios(stations.filter{isFavorite(it)});fullPlayerRefresh?.invoke()}
 
-    private fun showExitDialog(){
-        if(controller?.isPlaying!=true){finishAndRemoveTask();return}
-        val dialog=android.app.AlertDialog.Builder(this).setTitle("Keyfe Keder Radyo").setMessage("Uygulamadan çıkmak istiyor musun?\n\nArka planda çalmaya devam edebilirim veya yayını tamamen kapatabilirim.").setPositiveButton("Arka planda çal"){_,_->finishAndRemoveTask()}.setNegativeButton("Hayır, kapat"){_,_->stopPlaybackAndClose()}.setNeutralButton("Vazgeç",null).create()
-        dialog.setOnShowListener{dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setTextColor(orange);dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).setTextColor(Color.rgb(255,90,90));dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setTextColor(muted)};dialog.show()
-    }
-    private fun stopPlaybackAndClose(){try{controller?.stop();controller?.clearMediaItems()}catch(_:Exception){};try{stopService(Intent(this,RadioPlaybackService::class.java))}catch(_:Exception){};finishAndRemoveTask()}
-
-    private fun showSettings(){
-        val dialog=android.app.Dialog(this);val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(20),d(18),d(20),d(16));background=GradientDrawable().apply{setColor(Color.rgb(20,20,22));cornerRadius=d(28).toFloat();setStroke(d(1),Color.rgb(50,50,54))}}
-        root.addView(TextView(this).apply{text="Ayarlar";textSize=25f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD)},LinearLayout.LayoutParams(-1,d(38)))
-        root.addView(sectionLabel("OYNATMA"))
-        root.addView(settingCard(R.drawable.ic_moon,"Uyku zamanlayıcısı",sleepTimerLabel()){val options=arrayOf("Kapalı","15 dakika","30 dakika","45 dakika","60 dakika","90 dakika");android.app.AlertDialog.Builder(this@MainActivity).setTitle("Uyku zamanlayıcısı").setItems(options){_,which->val mins=when(which){0->0L;1->15L;2->30L;3->45L;4->60L;else->90L};prefs.edit().putLong("sleep_until",if(mins==0L)0L else System.currentTimeMillis()+mins*60_000L).apply()}.show()})
-        root.addView(settingCard(R.drawable.ic_play,"Arka planda çalma","Yayın açıkken uygulamadan çıkabilirsin"){android.widget.Toast.makeText(this,"Arka planda çalma etkin: medya servisi yayını sürdürüyor.",android.widget.Toast.LENGTH_SHORT).show()})
-        root.addView(sectionLabel("GÖRÜNÜM"));root.addView(settingCard(R.drawable.ic_bolt,"Akıcı animasyonlar","Kartlar ve spectrum efektleri açık",null));root.addView(settingCard(R.drawable.ic_settings,"Keyfe Keder teması","Turuncu imza renk",null));root.addView(sectionLabel("UYGULAMA"));root.addView(settingCard(R.drawable.ic_radio,"Keyfe Keder Radyo","Android • "+BuildConfig.VERSION_NAME,null));dialog.setContentView(root);dialog.window?.setBackgroundDrawableResource(android.R.color.transparent);dialog.show();dialog.window?.setLayout(-1,-2)
-    }
-    private fun sectionLabel(value:String)=TextView(this).apply{text=value;textSize=10f;setTextColor(orange);setTypeface(typeface,android.graphics.Typeface.BOLD);setPadding(d(4),d(14),d(4),d(7))}
-    private fun settingCard(icon:Int,name:String,detail:String,action:(()->Unit)?):View{val card=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(d(14),d(9),d(12),d(9));background=rounded(surface2,18);if(action!=null)setOnClickListener{tap(this);action.invoke()}};card.addView(ImageView(this).apply{setImageResource(icon);setColorFilter(orange);scaleType=ImageView.ScaleType.CENTER_INSIDE;setPadding(d(10),d(13),d(10),d(13))},LinearLayout.LayoutParams(d(42),d(50)));val info=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL;layoutParams=LinearLayout.LayoutParams(0,-2,1f)};info.addView(TextView(this).apply{text=name;textSize=14f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD)});info.addView(TextView(this).apply{text=detail;textSize=10f;setTextColor(muted)});card.addView(info);return card}
-    private fun sleepTimerLabel():String{val until=prefs.getLong("sleep_until",0L);if(until<=System.currentTimeMillis())return "Kapalı";return "Yaklaşık "+(((until-System.currentTimeMillis())/60000L).coerceAtLeast(1L))+" dk kaldı"}
-
-    private fun showFullPlayer(){
-        if(isFinishing||isDestroyed)return
-        val initial=stations.getOrNull(currentIndex)?:return
-        val dialog=android.app.Dialog(this);fullPlayerDialog=dialog
-        val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(d(22),d(10),d(22),d(18));background=GradientDrawable().apply{setColor(bg);cornerRadii=floatArrayOf(d(30).toFloat(),d(30).toFloat(),d(30).toFloat(),d(30).toFloat(),0f,0f,0f,0f);setStroke(d(1),Color.rgb(58,45,38))}}
-        val top=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
-        val close=TextView(this).apply{text="⌄";textSize=30f;setTextColor(muted);gravity=Gravity.CENTER;setOnClickListener{dialog.dismiss()}}
-        top.addView(close,LinearLayout.LayoutParams(d(54),d(48)))
-        top.addView(TextView(this).apply{text="ŞİMDİ ÇALIYOR";textSize=10f;setTextColor(orange);gravity=Gravity.CENTER;background=rounded(Color.rgb(43,28,20),16);letterSpacing=0.06f},LinearLayout.LayoutParams(-2,d(30)).apply{gravity=Gravity.CENTER})
-        top.addView(View(this),LinearLayout.LayoutParams(0,1,1f))
-        val favorite=ImageButton(this).apply{setImageResource(if(isFavorite(initial)) R.drawable.ic_heart else R.drawable.ic_heart_outline);setColorFilter(if(isFavorite(initial))orange else white);setBackgroundColor(Color.TRANSPARENT)}
-        top.addView(favorite,LinearLayout.LayoutParams(d(48),d(48)));root.addView(top,LinearLayout.LayoutParams(-1,d(48)))
-        val frame=FrameLayout(this).apply{layoutParams=LinearLayout.LayoutParams(d(226),d(226)).apply{topMargin=d(8);bottomMargin=d(18)};background=GradientDrawable().apply{shape=GradientDrawable.OVAL;setColor(Color.rgb(22,22,24));setStroke(d(2),Color.rgb(92,48,22))};elevation=d(5).toFloat()}
-        val logo=StationArtworkView(this).apply{background=rounded(Color.rgb(24,24,25),24);bind(initial.name,initial.genre,initial.logoUrl);setPlaying(controller?.isPlaying==true)}
-        frame.addView(logo,FrameLayout.LayoutParams(d(210),d(210)).apply{gravity=Gravity.CENTER});root.addView(frame)
-        val stationName=TextView(this).apply{text=initial.name;textSize=25f;setTextColor(white);gravity=Gravity.CENTER;setTypeface(typeface,android.graphics.Typeface.BOLD);maxLines=2};root.addView(stationName,LinearLayout.LayoutParams(-1,d(58)))
-        val live=TextView(this).apply{text="●  CANLI YAYIN";textSize=11f;setTextColor(orange);gravity=Gravity.CENTER;letterSpacing=0.08f};root.addView(live,LinearLayout.LayoutParams(-1,d(28)))
-        val track=TextView(this).apply{text=nowPlaying.ifBlank{"CANLI • "+initial.name};textSize=13f;setTextColor(white);gravity=Gravity.CENTER;maxLines=1;background=rounded(surface,20);setPadding(d(18),0,d(18),0)};root.addView(track,LinearLayout.LayoutParams(-1,d(42)))
-        val bigSpectrum=AudioSpectrumView(this).apply{setPlaying(controller?.isPlaying==true)};root.addView(bigSpectrum,LinearLayout.LayoutParams(-1,d(54)).apply{topMargin=d(8);bottomMargin=d(8)})
-        val controls=LinearLayout(this).apply{gravity=Gravity.CENTER}
-        val previous=iconButton(R.drawable.ic_prev).apply{layoutParams=LinearLayout.LayoutParams(d(60),d(60))}
-        val main=ImageButton(this).apply{setImageResource(if(controller?.isPlaying==true)R.drawable.ic_pause else R.drawable.ic_play);setColorFilter(white);background=GradientDrawable().apply{shape=GradientDrawable.OVAL;setColor(orange)};layoutParams=LinearLayout.LayoutParams(d(82),d(82)).apply{setMargins(d(20),0,d(20),0)}}
-        val next=iconButton(R.drawable.ic_next).apply{layoutParams=LinearLayout.LayoutParams(d(60),d(60))}
-        fun refresh(){if(!dialog.isShowing||isFinishing||isDestroyed)return;val st=stations.getOrNull(currentIndex)?:return;stationName.text=st.name;logo.bind(st.name,st.genre,st.logoUrl);logo.setPlaying(controller?.isPlaying==true);favorite.setImageResource(if(isFavorite(st)) R.drawable.ic_heart else R.drawable.ic_heart_outline);favorite.setColorFilter(if(isFavorite(st))orange else white);track.text=if(nowPlaying.isNotBlank()) nowPlaying else "Canlı yayın";live.text=if(controller?.isPlaying==true)"●  CANLI YAYIN"else"YAYIN HAZIR";live.setTextColor(if(controller?.isPlaying==true)orange else muted);main.setImageResource(if(controller?.isPlaying==true)R.drawable.ic_pause else R.drawable.ic_play);bigSpectrum.setPlaying(controller?.isPlaying==true)}
-        fullPlayerRefresh={refresh()}
-        favorite.setOnClickListener{val st=stations.getOrNull(currentIndex)?:return@setOnClickListener;toggleFavorite(st)}
-        main.setOnClickListener{togglePlay()}
-        previous.setOnClickListener{playRelative(-1)}
-        next.setOnClickListener{playRelative(1)}
-        controls.addView(previous);controls.addView(main);controls.addView(next);root.addView(controls,LinearLayout.LayoutParams(-1,d(92)))
-        dialog.setContentView(root);dialog.window?.setBackgroundDrawableResource(android.R.color.transparent);dialog.setCanceledOnTouchOutside(true);dialog.setOnDismissListener{logo.setPlaying(false);bigSpectrum.setPlaying(false);fullPlayerRefresh=null;fullPlayerDialog=null};dialog.show();dialog.window?.setLayout(-1,(resources.displayMetrics.heightPixels*0.90f).toInt());refresh()
+    private fun songRow(e: SongHistory.Entry): View {
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10)); background = ui.glass(18f); isClickable = true
+            setOnClickListener { Ui.pop(this); songActions(e.title, e.artist) }
+        }
+        val art = StationArtworkView(this).apply { bind(e.station, "", e.logo) }
+        row.addView(art, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)).apply { rightMargin = ui.dp(12) })
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(ui.text(e.title, 14.5f, Neon.TEXT, true))
+        texts.addView(ui.text(listOf(e.artist, e.station, FullPlayerView.timeAgo(e.time)).filter { it.isNotBlank() }.joinToString(" • "), 12f, Neon.MUTED))
+        row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(ui.icon(R.drawable.ic_music_search, Neon.ORANGE, 20))
+        return FrameLayout(this).apply {
+            setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(4))
+            addView(row, FrameLayout.LayoutParams(-1, -2))
+        }
     }
 
-    private fun iconButton(resId:Int)=ImageButton(this).apply{setImageResource(resId);setBackgroundColor(Color.TRANSPARENT);setColorFilter(white);layoutParams=LinearLayout.LayoutParams(d(52),d(52))}
-    private fun rounded(color:Int,radiusDp:Int)=GradientDrawable().apply{setColor(color);cornerRadius=d(radiusDp).toFloat()}
-    private fun tap(view:View){view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(70).withEndAction{view.animate().scaleX(1f).scaleY(1f).setDuration(130).start()}.start()}
-    private fun d(value:Int)=(value*resources.displayMetrics.density).toInt()
-    override fun onDestroy(){fullPlayerRefresh=null;fullPlayerDialog=null;handler.removeCallbacksAndMessages(null);controllerFuture?.let{MediaController.releaseFuture(it)};executor.shutdownNow();super.onDestroy()}
+    // ---------------------------------------------------------------- actions
+
+    private fun showMood(mood: String) {
+        if (stations.isEmpty()) return toast("Radyolar henüz yükleniyor.")
+        val list = RadioMoodMatcher.rank(stations, mood)
+        if (list.isEmpty()) return toast("Bu moda uygun radyo bulamadım. Keyfime Bırak'ı dene.")
+        listTitle = mood; listItems = list; showPage(Page.LIST)
+    }
+
+    private fun searchFor(query: String) {
+        val q = query.trim()
+        if (q.isBlank()) { if (page == Page.LIST) showPage(Page.RADIOS); return }
+        listTitle = "\"$q\""
+        listItems = stations.filter { it.name.contains(q, true) || it.genre.contains(q, true) || it.country.contains(q, true) || it.language.contains(q, true) }
+        showPage(Page.LIST)
+    }
+
+    private fun toggleSearch() {
+        val imm = getSystemService(InputMethodManager::class.java)
+        if (search.visibility == View.VISIBLE) {
+            search.setText(""); search.visibility = View.GONE; imm.hideSoftInputFromWindow(search.windowToken, 0)
+        } else {
+            search.visibility = View.VISIBLE; search.requestFocus(); imm.showSoftInput(search, 0)
+        }
+    }
+
+    private fun openPick() {
+        if (stations.isEmpty()) return toast("Radyolar henüz yükleniyor.")
+        if (pickSheet != null) return
+        pickSheet = PickSheetView(this, { stations }, { mood, exclude ->
+            StationPicker.pick(stations, favorites(), recentUrls(), brokenUrls(), Calendar.getInstance().get(Calendar.HOUR_OF_DAY), mood, exclude)
+        }, { play(it) }, { pickSheet = null }).also { padForBars(it); it.show(root) }
+    }
+
+    private fun openFullPlayer() {
+        val state = nowPlaying()
+        if (state.station == null) { openPick(); return }
+        if (fullPlayer != null) return
+        fullPlayer = FullPlayerView(this,
+            onClose = { closeFullPlayer() }, onToggle = { togglePlay() }, onPrev = { previous() }, onNext = { next() },
+            onFavorite = { nowPlaying().station?.let { toggleFavorite(it) } },
+            onSleep = { chooseSleepTimer() },
+            onSearch = { platform -> val np = nowPlaying(); searchSong(platform, np.song ?: np.station?.name.orEmpty(), np.artist) },
+            onShare = { shareNowPlaying() }
+        ).also { padForBars(it); it.show(root); it.bind(state, SongHistory.all(this)) }
+    }
+
+    private fun closeFullPlayer() { fullPlayer?.hide { fullPlayer = null } }
+
+    private fun goBack() {
+        when {
+            pickSheet != null -> pickSheet?.close()
+            fullPlayer != null -> closeFullPlayer()
+            search.visibility == View.VISIBLE -> toggleSearch()
+            page == Page.SONGS -> showPage(Page.DISCOVER)
+            page != Page.HOME -> { genreFilter = null; showPage(Page.HOME) }
+            else -> showExitDialog()
+        }
+    }
+
+    private fun songActions(title: String, artist: String) {
+        val query = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" ")
+        AlertDialog.Builder(this).setTitle(title)
+            .setItems(arrayOf("Spotify'da ara", "YouTube'da ara", "Kopyala")) { _, which ->
+                when (which) {
+                    0 -> searchSong("spotify", title, artist)
+                    1 -> searchSong("youtube", title, artist)
+                    else -> {
+                        getSystemService(android.content.ClipboardManager::class.java)
+                            .setPrimaryClip(android.content.ClipData.newPlainText("şarkı", query))
+                        toast("Kopyalandı")
+                    }
+                }
+            }.show()
+    }
+
+    private fun searchSong(platform: String, title: String, artist: String?) {
+        val query = listOf(artist?.takeIf { it != StationMedia.LIVE }.orEmpty(), title).filter { it.isNotBlank() }.joinToString(" ")
+        val encoded = Uri.encode(query)
+        val intents = if (platform == "spotify") listOf(Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$encoded")), Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/$encoded")))
+        else listOf(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$encoded")))
+        for (intent in intents) {
+            try { startActivity(intent); return } catch (_: ActivityNotFoundException) { }
+        }
+        toast("Açacak uygulama bulunamadı.")
+    }
+
+    private fun shareNowPlaying() {
+        val np = nowPlaying(); val st = np.station ?: return
+        val text = if (!np.song.isNullOrBlank()) "Keyfe Keder Radyo'da ${st.name} dinliyorum: ${listOfNotNull(np.artist?.takeIf { it != StationMedia.LIVE }, np.song).joinToString(" – ")}"
+        else "Keyfe Keder Radyo'da ${st.name} dinliyorum."
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Paylaş"))
+    }
+
+    private fun chooseSleepTimer() {
+        val options = arrayOf("Kapalı", "15 dakika", "30 dakika", "45 dakika", "60 dakika", "90 dakika")
+        val minutes = longArrayOf(0, 15, 30, 45, 60, 90)
+        AlertDialog.Builder(this).setTitle("Uyku zamanlayıcısı").setItems(options) { _, which ->
+            val m = minutes[which]
+            prefs.edit().putLong("sleep_until", if (m == 0L) 0L else System.currentTimeMillis() + m * 60_000L).apply()
+            toast(if (m == 0L) "Uyku zamanlayıcısı kapatıldı." else "$m dakika sonra yayını durduracağım.")
+            refreshPlayerUi()
+        }.show()
+    }
+
+    private fun sleepLabel(): String? {
+        val until = prefs.getLong("sleep_until", 0L)
+        if (until <= System.currentTimeMillis()) return null
+        return "${((until - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1)} dk"
+    }
+
+    private fun showSettings() {
+        val items = arrayOf(
+            "Uyku zamanlayıcısı: ${sleepLabel() ?: "Kapalı"}",
+            "Şarkı geçmişini aç",
+            "Şarkı geçmişini temizle",
+            "Radyo listesini yenile",
+            "Hakkında (sürüm ${BuildConfig.VERSION_NAME})"
+        )
+        AlertDialog.Builder(this).setTitle("Ayarlar").setItems(items) { _, which ->
+            when (which) {
+                0 -> chooseSleepTimer()
+                1 -> showPage(Page.SONGS)
+                2 -> { SongHistory.clear(this); toast("Şarkı geçmişi temizlendi."); if (page == Page.HOME || page == Page.SONGS) showPage(page) }
+                3 -> { toast("Liste yenileniyor…"); loadStations() }
+                else -> AlertDialog.Builder(this).setTitle("Keyfe Keder Radyo")
+                    .setMessage("Sürüm ${BuildConfig.VERSION_NAME}\n\n${stations.size} canlı radyo. Favorilerin ve geçmişin yalnızca bu cihazda saklanır.")
+                    .setPositiveButton("Tamam", null).show()
+            }
+        }.show()
+    }
+
+    private fun showExitDialog() {
+        if (controller?.isPlaying != true) { finish(); return }
+        AlertDialog.Builder(this).setTitle("Keyfe Keder Radyo")
+            .setMessage("Yayın arka planda çalmaya devam etsin mi?")
+            .setPositiveButton("Arka planda çal") { _, _ -> moveTaskToBack(true) }
+            .setNegativeButton("Kapat") { _, _ -> controller?.stop(); controller?.clearMediaItems(); finish() }
+            .setNeutralButton("Vazgeç", null).show()
+    }
+
+    // ---------------------------------------------------------------- playback
+
+    private fun connectPlayer() {
+        val token = SessionToken(this, ComponentName(this, RadioPlaybackService::class.java))
+        controllerFuture = MediaController.Builder(this, token).buildAsync().also { future ->
+            future.addListener({
+                val c = runCatching { future.get() }.getOrNull() ?: return@addListener toast("Oynatıcıya bağlanılamadı.")
+                controller = c
+                c.addListener(object : Player.Listener {
+                    override fun onEvents(player: Player, events: Player.Events) {
+                        if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED,
+                                Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_MEDIA_METADATA_CHANGED, Player.EVENT_PLAYER_ERROR)) {
+                            if (events.contains(Player.EVENT_IS_PLAYING_CHANGED) && player.isPlaying) playerError = false
+                            refreshPlayerUi()
+                        }
+                        if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) && page == Page.HOME) showPage(Page.HOME)
+                    }
+                    override fun onPlayerError(error: PlaybackException) { playerError = true; refreshPlayerUi() }
+                })
+                refreshPlayerUi()
+            }, ContextCompat.getMainExecutor(this))
+        }
+    }
+
+    private fun play(station: Station) {
+        val c = controller ?: return toast("Oynatıcı hazırlanıyor, bir saniye…")
+        requestNotificationPermission()
+        rememberStation(station)
+        playerError = false
+        c.setMediaItem(StationMedia.toMediaItem(this, station))
+        c.prepare(); c.play()
+        refreshPlayerUi()
+        miniArt.animate().scaleX(1.12f).scaleY(1.12f).setDuration(140).withEndAction { miniArt.animate().scaleX(1f).scaleY(1f).setDuration(220).start() }.start()
+    }
+
+    private fun togglePlay() {
+        val c = controller ?: return
+        when {
+            c.currentMediaItem == null -> openPick()
+            c.isPlaying -> c.pause()
+            else -> { if (c.playbackState == Player.STATE_IDLE) c.prepare(); c.play() }
+        }
+    }
+
+    private fun next() = step(1)
+    private fun previous() = step(-1)
+
+    private fun step(delta: Int) {
+        val c = controller ?: return
+        if (c.mediaItemCount > 1) {
+            if (delta > 0) c.seekToNextMediaItem() else c.seekToPreviousMediaItem()
+            c.prepare(); c.play()
+            nowPlaying().station?.let { rememberStation(it) }
+            return
+        }
+        if (stations.isEmpty()) return
+        val index = stations.indexOfFirst { it.resolvedUrl == c.currentMediaItem?.mediaId }
+        play(stations[((if (index < 0) 0 else index + delta) + stations.size) % stations.size])
+    }
+
+    private fun nowPlaying(): NowPlayingUi {
+        val c = controller
+        val id = c?.currentMediaItem?.mediaId
+        val station = stations.firstOrNull { it.resolvedUrl == id }
+        val meta: MediaMetadata? = c?.mediaMetadata
+        val hasTrack = meta?.extras?.getBoolean(StationMedia.EXTRA_HAS_TRACK) == true
+        return NowPlayingUi(
+            station = station,
+            song = if (hasTrack) meta?.title?.toString() else null,
+            artist = if (hasTrack) meta?.artist?.toString() else null,
+            playing = c?.isPlaying == true,
+            buffering = c?.playbackState == Player.STATE_BUFFERING,
+            error = playerError,
+            favorite = station?.let { isFavorite(it) } == true,
+            sleepLabel = sleepLabel(),
+        )
+    }
+
+    private fun refreshPlayerUi() {
+        if (isFinishing || isDestroyed) return
+        val np = nowPlaying()
+        val st = np.station
+        val accent = st?.let { StationArtworkView.accentFor(it.genre) } ?: Neon.ORANGE
+        ambient.setAccent(accent)
+        if (st == null) {
+            miniArt.bind("RADYO", ""); miniArt.setPlaying(false)
+            miniTitle.text = "Bir radyo seç"; miniSub.text = "Keyfime Bırak'ı dene"
+            miniSpectrum.setPlaying(false); miniSpectrum.visibility = View.INVISIBLE
+        } else {
+            miniArt.bind(st.name, st.genre, st.logoUrl); miniArt.setPlaying(np.playing)
+            miniTitle.text = np.song ?: st.name
+            miniSub.text = when {
+                np.error -> "Yayına ulaşılamadı, yeniden deneniyor…"
+                np.buffering -> "Bağlanıyor…"
+                np.song != null -> listOfNotNull(np.artist?.takeIf { it != StationMedia.LIVE }, st.name).joinToString(" • ")
+                np.playing -> "● CANLI • ${st.name}"
+                else -> "Duraklatıldı • ${st.name}"
+            }
+            miniSub.setTextColor(if (np.playing && np.song == null) accent else Neon.MUTED)
+            miniSpectrum.setAccent(accent); miniSpectrum.setPlaying(np.playing)
+            miniSpectrum.visibility = if (np.playing || np.buffering) View.VISIBLE else View.INVISIBLE
+        }
+        miniPlayIcon.setImageResource(if (np.playing || np.buffering) R.drawable.ic_pause else R.drawable.ic_play)
+        miniPlay.background = GlassDrawable(this, 25f, accent, 0x55FFFFFF, Neon.withAlpha(accent, if (np.playing) 170 else 60), intArrayOf(accent, Neon.mix(accent, Neon.PINK, .7f)))
+        mini.background = ui.glass(24f, if (np.playing) Neon.withAlpha(accent, 80) else 0, fill = 0x2EFFFFFF)
+        fullPlayer?.bind(np, SongHistory.all(this))
+    }
+
+    // ---------------------------------------------------------------- data
+
+    private fun loadStations() {
+        val repo = StationRepository(applicationContext)
+        executor.execute {
+            // Show the cached/bundled list immediately, then swap in the fresh one if it downloads
+            runCatching { repo.loadLocal() }.getOrNull()?.let { local -> runOnUiThread { applyStations(local) } }
+            runCatching { repo.refresh() }.getOrNull()?.let { fresh -> runOnUiThread { applyStations(fresh) } }
+        }
+    }
+
+    private fun applyStations(loaded: List<Station>) {
+        if (isFinishing || isDestroyed || loaded.isEmpty() || loaded == stations) return
+        stations = loaded
+        if (page == Page.LIST && search.text.isNotBlank()) searchFor(search.text.toString()) else showPage(page)
+        refreshPlayerUi()
+    }
+
+    private fun favorites() = stations.filter { isFavorite(it) }.map { it.resolvedUrl }.toSet()
+    private fun recentUrls() = prefs.getString("history", "").orEmpty().split("|").filter { it.isNotBlank() }
+    private fun brokenUrls(): Set<String> {
+        val cutoff = System.currentTimeMillis() - 6 * 3600_000L
+        return prefs.all.filter { (k, v) -> k.startsWith("bad_") && (v as? Long ?: 0L) > cutoff }.keys.map { it.removePrefix("bad_") }.toSet()
+    }
+    private fun historyStations() = recentUrls().mapNotNull { url -> stations.firstOrNull { it.resolvedUrl == url } }.take(10)
+
+    private fun rememberStation(station: Station) {
+        val urls = recentUrls().filter { it != station.resolvedUrl }.toMutableList()
+        urls.add(0, station.resolvedUrl)
+        prefs.edit().putString("history", urls.take(12).joinToString("|")).apply()
+    }
+
+    private fun isFavorite(station: Station) = prefs.getBoolean(station.resolvedUrl, false)
+
+    private fun toggleFavorite(station: Station) {
+        val now = !isFavorite(station)
+        prefs.edit().putBoolean(station.resolvedUrl, now).apply()
+        toast(if (now) "${station.name} favorilere eklendi" else "${station.name} favorilerden çıkarıldı")
+        when (page) {
+            Page.FAVORITES, Page.HOME -> showPage(page)
+            else -> adapter.refresh()
+        }
+        refreshPlayerUi()
+    }
+
+    // ---------------------------------------------------------------- misc
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            && !prefs.getBoolean("asked_notifications", false)) {
+            prefs.edit().putBoolean("asked_notifications", true).apply()
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+        }
+    }
+
+    private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+        in 5..11 -> "Günaydın"
+        in 12..17 -> "İyi günler"
+        in 18..22 -> "İyi akşamlar"
+        else -> "İyi geceler"
+    }
+
+    private fun pickSubtitle(): String = when (StationPicker.moodForHour(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))) {
+        "Kafamı dinliyorum" -> "Gecenin bu saatine sakin bir frekans seçeyim."
+        "Enerjik" -> "Enerjini yükseltecek bir yayın bulayım."
+        "Yoldayım" -> "Gün akarken eşlik edecek bir radyo bulayım."
+        else -> "Akşamın keyfine göre bir frekans seçeyim."
+    }
+
+    private fun dayOfYear() = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 }

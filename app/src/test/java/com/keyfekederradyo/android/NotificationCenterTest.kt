@@ -57,4 +57,23 @@ class NotificationCenterTest {
             assertTrue(it!!.first in setOf("Seni özledik", "Bir süredir yoksun"))
         })
     }
+
+    @Test
+    fun random_slot_is_stable_and_inside_its_window() {
+        // afternoon_surprise: 13:00-16:30; on days it fires, the time must not move between calls
+        var fired = 0
+        for (day in 1..28) {
+            val start = at(2026, 11, day, 12, 0)
+            val a = NotificationCenter.next(config, start)!!
+            val b = NotificationCenter.next(config, start)!!
+            assertEquals(a, b)
+            if (a.second == "afternoon_surprise") {
+                fired++
+                val c = Calendar.getInstance().apply { timeInMillis = a.first }
+                val minutes = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
+                assertTrue("$minutes", minutes in 13 * 60 until 16 * 60 + 30)
+            }
+        }
+        assertTrue("surprise should fire on some days, fired $fired", fired in 3..25)
+    }
 }

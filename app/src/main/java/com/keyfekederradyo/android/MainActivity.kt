@@ -88,6 +88,8 @@ class MainActivity : AppCompatActivity() {
     private var pickSheet: PickSheetView? = null
     private var outputSheet: AudioOutputSheet? = null
     private var pendingPlayUrl: String? = null
+    private var pendingShortcut: String? = null
+    private var suggestSheet: SuggestSheet? = null
     private var systemBars = intArrayOf(0, 0, 0, 0)
 
     private val taglines = listOf("Bir frekans, bin keyif.", "Biraz müzik, biraz keyif.", "Keyfin ne isterse, frekans orada.", "Kafana göre bir radyo bulalım.")
@@ -106,6 +108,8 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(taglineRunnable, 3500)
         handler.postDelayed(sleepTicker, 30_000)
         pendingPlayUrl = intent?.getStringExtra(NotificationCenter.EXTRA_PLAY_URL)
+        pendingShortcut = intent?.action?.takeIf { it == ACTION_PICK || it == ACTION_FAVORITES }
+        askNotificationsOnFirstLaunch()
         NotificationCenter.schedule(this)
         executor.execute { NotificationCenter.refresh(applicationContext) }
         connectPlayer()
@@ -116,6 +120,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.getStringExtra(NotificationCenter.EXTRA_PLAY_URL)?.let { pendingPlayUrl = it; playPending() }
+        intent.action?.takeIf { it == ACTION_PICK || it == ACTION_FAVORITES }?.let { pendingShortcut = it; playPending() }
     }
 
     override fun onResume() {
@@ -130,6 +135,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playPending() {
+        if (stations.isNotEmpty()) when (pendingShortcut) {
+            ACTION_PICK -> { pendingShortcut = null; openPick() }
+            ACTION_FAVORITES -> { pendingShortcut = null; showPage(Page.FAVORITES) }
+        }
         val url = pendingPlayUrl ?: return
         if (controller == null || stations.isEmpty()) return
         pendingPlayUrl = null
@@ -455,6 +464,46 @@ class MainActivity : AppCompatActivity() {
         val fresh = stations.filter { it.resolvedUrl !in history }.shuffled(java.util.Random(dayOfYear() * 31L)).take(10)
         c.addView(ui.sectionHeader("Daha önce dinlemediklerin"))
         if (fresh.isEmpty()) c.addView(ui.empty("Hepsini denemişsin! O zaman Keyfime Bırak'a teslim ol.")) else c.addView(cardRow(fresh))
+
+        val cities = stations.filter { it.city.isNotBlank() }.groupingBy { it.city }.eachCount().filter { it.value >= 2 }
+            .entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.key == "Ulusal" }.thenByDescending { it.value }.thenBy { it.key })
+        if (cities.isNotEmpty()) {
+            c.addView(ui.sectionHeader("Şehrine göre"))
+            c.addView(ui.chipRow(cities.map { (city, count) ->
+                ui.chip("$city  $count", if (city == "Ulusal") R.drawable.ic_broadcast else null) { showCity(city) }
+            }))
+        }
+
+        c.addView(suggestCard(), LinearLayout.LayoutParams(-1, -2).apply { setMargins(ui.dp(16), ui.dp(26), ui.dp(16), ui.dp(4)) })
+    }
+
+    private fun showCity(city: String) {
+        listTitle = if (city == "Ulusal") "Ulusal radyolar" else "$city radyoları"
+        listItems = stations.filter { it.city == city }
+        showPage(Page.LIST)
+    }
+
+    private fun suggestCard(): View {
+        val card = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(18), ui.dp(16), ui.dp(16), ui.dp(16)); isClickable = true
+            background = ui.glass(24f, gradient = intArrayOf(0x33FF7A1A, 0x26FF2E88, 0x148B5CFF))
+            setOnClickListener { Ui.pop(this); openSuggest() }
+        }
+        card.addView(FrameLayout(this).apply {
+            background = GlassDrawable(this@MainActivity, 20f, Neon.ORANGE, 0x55FFFFFF, 0, Neon.BRAND)
+            addView(ui.icon(R.drawable.ic_radio_fill, Neon.TEXT, 22), FrameLayout.LayoutParams(ui.dp(22), ui.dp(22), Gravity.CENTER))
+        }, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)).apply { rightMargin = ui.dp(14) })
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(ui.text("Aradığın radyo yok mu?", 16f, Neon.TEXT, true))
+        texts.addView(ui.text("Bize öner, listeye ekleyelim.", 12.5f, Neon.MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(2) })
+        card.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(ui.icon(R.drawable.ic_chevron_right, Neon.TEXT, 20))
+        return card
+    }
+
+    private fun openSuggest() {
+        if (suggestSheet != null) return
+        suggestSheet = SuggestSheet(this) { suggestSheet = null }.also { padForBars(it); it.show(root) }
     }
 
     private fun buildSettings() {
@@ -498,6 +547,10 @@ class MainActivity : AppCompatActivity() {
         val data = settingsCard()
         data.addView(settingRow(R.drawable.ic_refresh, "Radyo listesini yenile", "${stations.size} radyo yüklü", chevron()).apply {
             setOnClickListener { Ui.pop(this); toast("Liste yenileniyor…"); loadStations(force = true) }
+        })
+        data.addView(divider())
+        data.addView(settingRow(R.drawable.ic_radio_fill, "Radyo öner", "Listede olmayan bir radyoyu bize bildir", chevron()).apply {
+            setOnClickListener { Ui.pop(this); openSuggest() }
         })
         data.addView(divider())
         data.addView(settingRow(R.drawable.ic_history, "Son dinlenenleri temizle", "${recentUrls().size} radyo", chevron()).apply {
@@ -686,6 +739,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun goBack() {
         when {
+            suggestSheet != null -> suggestSheet?.close()
             outputSheet != null -> outputSheet?.close()
             pickSheet != null -> pickSheet?.close()
             fullPlayer != null -> closeFullPlayer()
@@ -890,6 +944,17 @@ class MainActivity : AppCompatActivity() {
         val urls = recentUrls().filter { it != station.resolvedUrl }.toMutableList()
         urls.add(0, station.resolvedUrl)
         prefs.edit().putString("history", urls.take(12).joinToString("|")).apply()
+        // long-press the app icon: "son radyo" shortcut, played only when the user taps it
+        runCatching {
+            androidx.core.content.pm.ShortcutManagerCompat.pushDynamicShortcut(this,
+                androidx.core.content.pm.ShortcutInfoCompat.Builder(this, "last")
+                    .setShortLabel(station.name.take(24))
+                    .setLongLabel("Dinle: ${station.name}".take(40))
+                    .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, R.drawable.shortcut_radio))
+                    .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_VIEW)
+                        .putExtra(NotificationCenter.EXTRA_PLAY_URL, station.resolvedUrl))
+                    .build())
+        }
     }
 
     private fun isFavorite(station: Station) = prefs.getBoolean(station.resolvedUrl, false)
@@ -912,6 +977,13 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean("asked_notifications", true).apply()
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
         }
+    }
+
+    /** First launch: notifications start switched on, so ask for the Android 13+ permission right away. */
+    private fun askNotificationsOnFirstLaunch() {
+        if (prefs.getBoolean("first_launch_done", false)) return
+        prefs.edit().putBoolean("first_launch_done", true).apply()
+        if (NotificationCenter.isEnabled(this)) handler.postDelayed({ ensureNotificationsAllowed() }, 1200)
     }
 
     /** Notifications need the permission; ask, or send the user to the app's notification settings. */
@@ -942,4 +1014,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun dayOfYear() = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+
+    companion object {
+        const val ACTION_PICK = "com.keyfekederradyo.android.PICK"
+        const val ACTION_FAVORITES = "com.keyfekederradyo.android.FAVORITES"
+    }
 }

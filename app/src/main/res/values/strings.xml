@@ -2,4 +2,8 @@
 <resources>
     <string name="app_name">Keyfe Keder Radyo</string>
     <string name="widget_description">Radyonu ana ekrandan çal, duraklat, değiştir</string>
+    <string name="shortcut_pick_short">Keyfime bırak</string>
+    <string name="shortcut_pick_long">Keyfime bırak: bana bir radyo seç</string>
+    <string name="shortcut_fav_short">Favoriler</string>
+    <string name="shortcut_fav_long">Favori radyolarım</string>
 </resources>

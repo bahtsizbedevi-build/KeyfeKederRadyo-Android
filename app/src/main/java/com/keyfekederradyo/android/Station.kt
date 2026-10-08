@@ -10,5 +10,7 @@ data class Station(
     val quality: String = "",
     val song: String = "Canlı yayın",
     val homepage: String = "",
-    val logoUrl: String = ""
+    val logoUrl: String = "",
+    /** Province name, "Ulusal" for national networks, or empty when unknown. */
+    val city: String = ""
 )

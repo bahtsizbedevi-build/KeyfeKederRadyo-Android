@@ -33,7 +33,8 @@ object NotificationCenter {
     private const val SOURCE =
         "https://raw.githubusercontent.com/bahtsizbedevi-build/KeyfeKederRadyo-Android/main/data/notifications.json"
 
-    data class Slot(val id: String, val days: Set<Int>, val hour: Int, val minute: Int)
+    /** A fixed time, or (with [windowEnd]) a random time in [hour:minute, windowEnd) on a share ([chance]) of days. */
+    data class Slot(val id: String, val days: Set<Int>, val hour: Int, val minute: Int, val windowEnd: Int? = null, val chance: Double = 1.0)
     data class Template(val slot: String, val title: String, val body: String)
     data class Special(val date: String, val hour: Int, val minute: Int, val title: String, val body: String)
     data class Config(val slots: List<Slot>, val templates: List<Template>, val comeback: List<Template>, val specials: List<Special>)
@@ -47,8 +48,13 @@ object NotificationCenter {
             List(a.length()) { i ->
                 val s = a.getJSONObject(i)
                 val days = s.getJSONArray("days").let { d -> List(d.length()) { d.getInt(it) }.toSet() }
-                val (h, m) = time(s.getString("time"))
-                Slot(s.getString("id"), days, h, m)
+                if (s.has("window")) {
+                    val (from, to) = s.getString("window").split("-").map { time(it.trim()) }
+                    Slot(s.getString("id"), days, from.first, from.second, to.first * 60 + to.second, s.optDouble("chance", 1.0))
+                } else {
+                    val (h, m) = time(s.getString("time"))
+                    Slot(s.getString("id"), days, h, m)
+                }
             }
         }.orEmpty()
         fun templates(key: String) = o.optJSONArray(key)?.let { a ->
@@ -107,11 +113,22 @@ object NotificationCenter {
             // Calendar: Sunday=1..Saturday=7  ->  1=Monday..7=Sunday
             val isoDay = (day.get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1
             config.slots.filter { isoDay in it.days }.forEach { slot ->
-                at(day, slot.hour, slot.minute)?.takeIf { it > now.timeInMillis }?.let { candidates += it to slot.id }
+                val (h, m) = timeFor(slot, date) ?: return@forEach
+                at(day, h, m)?.takeIf { it > now.timeInMillis }?.let { candidates += it to slot.id }
             }
             if (candidates.isNotEmpty()) break
         }
         return candidates.minByOrNull { it.first }
+    }
+
+    /** Fixed slots keep their time; random slots get a stable per-day time (or skip the day). */
+    private fun timeFor(slot: Slot, date: String): Pair<Int, Int>? {
+        val end = slot.windowEnd ?: return slot.hour to slot.minute
+        val rnd = Random("$date/${slot.id}".hashCode())
+        if (rnd.nextDouble() >= slot.chance) return null
+        val start = slot.hour * 60 + slot.minute
+        val minute = start + (rnd.nextInt(((end - start) / 5).coerceAtLeast(1))) * 5
+        return minute / 60 to minute % 60
     }
 
     private fun at(day: Calendar, hour: Int, minute: Int): Long? = (day.clone() as Calendar).apply {

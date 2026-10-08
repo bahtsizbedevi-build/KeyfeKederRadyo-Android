@@ -63,7 +63,7 @@ def image_size(data):
 
 
 def good_logo(url):
-    if not url or not url.startswith("http"):
+    if not url or not url.startswith("http") or any(h in url for h in NOT_A_LOGO):
         return None
     try:
         size = image_size(get(url))
@@ -108,6 +108,10 @@ def find_logo(station):
                 return cand
     return ""
 
+
+# Hosting/aggregator sites: their icon would be shown on many unrelated stations
+NOT_A_LOGO = ("yayin.com.tr", "netyayin.net", "radyositesihazir.com", "radyomadyo.com", "canliyayin.org",
+              "kralmuzik.com.tr", "canliradyolardinle.com", "onlineradio.com.tr", "radyotvonline", "hidayetradyolari.com")
 
 # Stream hosts that belong to CDNs/hosting companies, not to the station itself
 GENERIC_HOSTS = ("streamtheworld", "radyotvonline", "liderhost", "fastcast4u", "shoutcast", "icecast",

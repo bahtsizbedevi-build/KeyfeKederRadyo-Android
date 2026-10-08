@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App shortcut icon: white glyph on the brand gradient circle -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <gradient android:angle="315" android:startColor="#FFFF7A1A" android:endColor="#FFFF2E88" />
+        </shape>
+    </item>
+    <item android:bottom="12dp" android:left="12dp" android:right="12dp" android:top="12dp" android:drawable="@drawable/ic_radio_fill" />
+</layer-list>

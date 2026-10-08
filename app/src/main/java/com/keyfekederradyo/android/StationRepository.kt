@@ -27,6 +27,9 @@ class StationRepository(private val context: Context) {
 
     /** Instant list from the device cache, or the bundled copy. Never touches the network. */
     fun loadLocal(): List<Station> {
+        // a cache written before this app version was installed is older than the bundled list
+        val installed = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime }.getOrDefault(0L)
+        if (cacheFile.exists() && cacheFile.lastModified() < installed) cacheFile.delete()
         runCatching { cacheFile.readText() }.getOrNull()
             ?.let { cached -> runCatching { parse(cached) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it } }
         return parse(context.assets.open("stations.json").bufferedReader().use { it.readText() })
@@ -79,7 +82,8 @@ class StationRepository(private val context: Context) {
                 quality = o.optString("quality").trim(),
                 song = o.optString("song").ifBlank { "Canlı yayın" },
                 homepage = homepage,
-                logoUrl = o.optString("logo").trim().ifBlank { faviconFor(homepage) }
+                logoUrl = o.optString("logo").trim().ifBlank { faviconFor(homepage) },
+                city = o.optString("city").trim()
             )
         }
 

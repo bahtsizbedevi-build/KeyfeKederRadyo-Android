@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="pick"
+        android:enabled="true"
+        android:icon="@drawable/shortcut_pick"
+        android:shortcutShortLabel="@string/shortcut_pick_short"
+        android:shortcutLongLabel="@string/shortcut_pick_long">
+        <intent
+            android:action="com.keyfekederradyo.android.PICK"
+            android:targetPackage="com.keyfekederradyo.android"
+            android:targetClass="com.keyfekederradyo.android.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="favorites"
+        android:enabled="true"
+        android:icon="@drawable/shortcut_fav"
+        android:shortcutShortLabel="@string/shortcut_fav_short"
+        android:shortcutLongLabel="@string/shortcut_fav_long">
+        <intent
+            android:action="com.keyfekederradyo.android.FAVORITES"
+            android:targetPackage="com.keyfekederradyo.android"
+            android:targetClass="com.keyfekederradyo.android.MainActivity" />
+    </shortcut>
+</shortcuts>

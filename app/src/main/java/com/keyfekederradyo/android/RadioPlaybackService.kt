@@ -196,9 +196,6 @@ class RadioPlaybackService : MediaLibraryService() {
         val old = current.mediaMetadata
         if (old.title == newMeta.title && old.artist == newMeta.artist) return
         if (index >= 0) player.replaceMediaItem(index, current.buildUpon().setMediaMetadata(newMeta).build())
-        if (parsed != null) {
-            SongHistory.add(this, SongHistory.Entry(parsed.second, parsed.first.orEmpty(), station.name, station.logoUrl, System.currentTimeMillis()))
-        }
     }
 
     private fun sleepExpired(): Boolean {

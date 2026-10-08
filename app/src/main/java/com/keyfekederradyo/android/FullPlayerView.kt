@@ -39,12 +39,10 @@ class FullPlayerView(
     private val onNext: () -> Unit,
     private val onFavorite: () -> Unit,
     private val onSleep: () -> Unit,
-    private val onSearch: (platform: String) -> Unit,
     private val onShare: () -> Unit,
 ) : FrameLayout(context) {
     private val ui = Ui(context)
     private val shade = Paint()
-    private var accent = Neon.ORANGE
 
     private val artwork = StationArtworkView(context)
     private val songView = ui.text("", 25f, Neon.TEXT, true).apply {
@@ -52,13 +50,14 @@ class FullPlayerView(
     }
     private val artistView = ui.text("", 15f, Neon.MUTED).apply { gravity = Gravity.CENTER }
     private val liveBadge = ui.label("● Canlı yayın").apply { gravity = Gravity.CENTER }
-    private val stationChip = ui.text("", 12.5f, Neon.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(ui.dp(14), ui.dp(7), ui.dp(14), ui.dp(7)) }
+    private val stationChip = ui.text("", 12.5f, Neon.TEXT, true).apply {
+        gravity = Gravity.CENTER; setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(8))
+    }
     private val spectrum = AudioSpectrumView(context, full = true)
-    private val favButton = ui.iconButton(R.drawable.ic_heart_outline, "Favorilere ekle", 48, 22) { onFavorite() }
-    private val playIcon = ImageView(context).apply { setColorFilter(0xFFFFFFFF.toInt()); scaleType = ImageView.ScaleType.CENTER_INSIDE }
+    private val favorite = FavoriteButton(context, 24f).apply { setOnClickListener { onFavorite() } }
+    private val playIcon = ImageView(context).apply { setColorFilter(Neon.TEXT); scaleType = ImageView.ScaleType.CENTER_INSIDE }
     private val playButton = FrameLayout(context)
-    private val sleepText = ui.text("Uyku", 11f, Neon.MUTED).apply { gravity = Gravity.CENTER }
-    private val songsBox = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val sleepText = ui.text("Uyku", 11.5f, Neon.MUTED).apply { gravity = Gravity.CENTER }
     private val pulse = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = 1600; repeatCount = ValueAnimator.INFINITE; repeatMode = ValueAnimator.REVERSE
         addUpdateListener { val v = it.animatedValue as Float; playButton.scaleX = 1f + .04f * v; playButton.scaleY = 1f + .04f * v }
@@ -76,41 +75,37 @@ class FullPlayerView(
         scroll.addView(column)
         addView(scroll, LayoutParams(-1, -1))
 
-        // top bar
         val top = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
-        top.addView(ui.iconButton(R.drawable.ic_chevron_down, "Kapat", 48, 26) { onClose() })
+        top.addView(ui.iconButton(R.drawable.ic_chevron_down, "Kapat", 48, 22) { onClose() })
         top.addView(ui.label("Şimdi çalıyor", Neon.TEXT).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
-        top.addView(favButton)
+        top.addView(FrameLayout(context).apply {
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Neon.GLASS) }
+            addView(favorite, LayoutParams(-1, -1))
+        }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
         column.addView(top, LinearLayout.LayoutParams(-1, ui.dp(56)))
 
-        column.addView(artwork, LinearLayout.LayoutParams(ui.dp(268), ui.dp(268)).apply { topMargin = ui.dp(18); bottomMargin = ui.dp(22) })
+        column.addView(artwork, LinearLayout.LayoutParams(ui.dp(272), ui.dp(272)).apply { topMargin = ui.dp(20); bottomMargin = ui.dp(24) })
         column.addView(liveBadge, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(10) })
         column.addView(songView, LinearLayout.LayoutParams(-1, -2))
         column.addView(artistView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
         column.addView(stationChip, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(14); gravity = Gravity.CENTER_HORIZONTAL })
         column.addView(spectrum, LinearLayout.LayoutParams(-1, ui.dp(132)).apply { topMargin = ui.dp(12) })
 
-        // transport controls
         val controls = LinearLayout(context).apply { gravity = Gravity.CENTER }
-        controls.addView(ui.iconButton(R.drawable.ic_prev, "Önceki radyo", 60, 28) { onPrev() })
+        controls.addView(ui.iconButton(R.drawable.ic_prev, "Önceki radyo", 60, 26) { onPrev() })
         playButton.apply {
             contentDescription = "Çal / duraklat"; isClickable = true
             addView(playIcon, LayoutParams(ui.dp(34), ui.dp(34), Gravity.CENTER))
             setOnClickListener { Ui.pop(this); onToggle() }
         }
-        controls.addView(playButton, LinearLayout.LayoutParams(ui.dp(86), ui.dp(86)).apply { setMargins(ui.dp(26), 0, ui.dp(26), 0) })
-        controls.addView(ui.iconButton(R.drawable.ic_next, "Sonraki radyo", 60, 28) { onNext() })
-        column.addView(controls, LinearLayout.LayoutParams(-1, ui.dp(110)).apply { topMargin = ui.dp(4) })
+        controls.addView(playButton, LinearLayout.LayoutParams(ui.dp(88), ui.dp(88)).apply { setMargins(ui.dp(26), 0, ui.dp(26), 0) })
+        controls.addView(ui.iconButton(R.drawable.ic_next, "Sonraki radyo", 60, 26) { onNext() })
+        column.addView(controls, LinearLayout.LayoutParams(-1, ui.dp(112)).apply { topMargin = ui.dp(4) })
 
-        // actions
         val actions = LinearLayout(context).apply { gravity = Gravity.CENTER }
-        actions.addView(action(R.drawable.ic_moon, sleepText) { onSleep() })
-        actions.addView(action(R.drawable.ic_music_search, ui.text("Spotify", 11f, Neon.MUTED)) { onSearch("spotify") })
-        actions.addView(action(R.drawable.ic_video, ui.text("YouTube", 11f, Neon.MUTED)) { onSearch("youtube") })
-        actions.addView(action(R.drawable.ic_share, ui.text("Paylaş", 11f, Neon.MUTED)) { onShare() })
-        column.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
-
-        column.addView(songsBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(18) })
+        actions.addView(action(R.drawable.ic_timer, sleepText) { onSleep() })
+        actions.addView(action(R.drawable.ic_share, ui.text("Paylaş", 11.5f, Neon.MUTED)) { onShare() })
+        column.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
     }
 
     private fun action(icon: Int, label: TextView, onClick: () -> Unit): View {
@@ -119,71 +114,48 @@ class FullPlayerView(
             setOnClickListener { Ui.pop(this); onClick() }
         }
         box.addView(FrameLayout(context).apply {
-            background = ui.glass(18f)
-            addView(ui.icon(icon, Neon.TEXT, 22), LayoutParams(ui.dp(22), ui.dp(22), Gravity.CENTER))
-        }, LinearLayout.LayoutParams(ui.dp(54), ui.dp(54)))
+            background = ui.glass(20f)
+            addView(ui.icon(icon, Neon.TEXT, 24), LayoutParams(ui.dp(24), ui.dp(24), Gravity.CENTER))
+        }, LinearLayout.LayoutParams(ui.dp(58), ui.dp(58)))
         label.gravity = Gravity.CENTER
         box.addView(label, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(6) })
-        return box.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
+        return box.apply { layoutParams = LinearLayout.LayoutParams(ui.dp(110), -2) }
     }
 
-    fun bind(state: NowPlayingUi, recentSongs: List<SongHistory.Entry>) {
+    /** [animateFavorite] = the user just tapped the heart. */
+    fun bind(state: NowPlayingUi, animateFavorite: Boolean = false) {
         val station = state.station ?: return
-        accent = StationArtworkView.accentFor(station.genre)
         artwork.bind(station.name, station.genre, station.logoUrl)
         artwork.setPlaying(state.playing)
-        spectrum.setAccent(accent)
         spectrum.setPlaying(state.playing)
         val hasSong = !state.song.isNullOrBlank()
         songView.text = if (hasSong) state.song else station.name
         artistView.text = when {
             state.error -> "Yayına ulaşılamadı, yeniden deneniyor…"
             state.buffering -> "Bağlanıyor…"
-            hasSong -> state.artist?.takeIf { it.isNotBlank() && it != StationMedia.LIVE } ?: station.name
-            else -> "Canlı yayın • ${station.genre.ifBlank { "Radyo" }}"
+            hasSong -> state.artist?.takeIf { it.isNotBlank() && it != StationMedia.LIVE } ?: "Canlı yayın"
+            else -> "Canlı yayın"
         }
         liveBadge.text = if (state.playing) "● CANLI YAYIN" else if (state.buffering) "BAĞLANIYOR" else "DURAKLATILDI"
-        liveBadge.setTextColor(if (state.playing) accent else Neon.MUTED)
-        stationChip.text = station.name
-        stationChip.background = ui.glass(16f, Neon.withAlpha(accent, 60))
-        (favButton.getChildAt(0) as ImageView).apply {
-            setImageResource(if (state.favorite) R.drawable.ic_heart else R.drawable.ic_heart_outline)
-            setColorFilter(if (state.favorite) Neon.PINK else Neon.TEXT)
-        }
+        liveBadge.setTextColor(if (state.playing) Neon.ORANGE else Neon.MUTED)
+        stationChip.text = listOf(station.name, station.genre).filter { it.isNotBlank() }.joinToString("  •  ")
+        stationChip.background = ui.glass(18f)
+        if (animateFavorite) favorite.animateTo(state.favorite) else if (favorite.isOn != state.favorite) favorite.setOn(state.favorite)
         playIcon.setImageResource(if (state.playing || state.buffering) R.drawable.ic_pause else R.drawable.ic_play)
-        playButton.background = GlassDrawable(context, 43f, accent, 0x55FFFFFF, Neon.withAlpha(accent, if (state.playing) 200 else 90),
-            intArrayOf(accent, Neon.mix(accent, Neon.PINK, .7f)))
+        playButton.background = GlassDrawable(context, 44f, Neon.ORANGE, 0x55FFFFFF, Neon.withAlpha(Neon.ORANGE, if (state.playing) 190 else 90), Neon.BRAND)
         if (state.playing) { if (!pulse.isStarted) pulse.start() } else { pulse.cancel(); playButton.scaleX = 1f; playButton.scaleY = 1f }
         sleepText.text = state.sleepLabel ?: "Uyku"
         sleepText.setTextColor(if (state.sleepLabel != null) Neon.ORANGE else Neon.MUTED)
-        bindSongs(station, recentSongs)
-        invalidate()
-    }
-
-    private fun bindSongs(station: Station, songs: List<SongHistory.Entry>) {
-        songsBox.removeAllViews()
-        val here = songs.filter { it.station == station.name }.take(5)
-        if (here.isEmpty()) return
-        songsBox.addView(ui.label("Bu yayında az önce çalanlar", Neon.MUTED).apply { setPadding(ui.dp(4), 0, 0, ui.dp(8)) })
-        here.forEach { e ->
-            val row = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(10)); background = ui.glass(16f)
-            }
-            row.addView(ui.text(e.title, 14f, Neon.TEXT, true))
-            row.addView(ui.text(listOf(e.artist, timeAgo(e.time)).filter { it.isNotBlank() }.joinToString(" • "), 12f, Neon.MUTED))
-            songsBox.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(8) })
-        }
     }
 
     override fun onDraw(canvas: Canvas) {
-        // deep backdrop washed with the station colour
         shade.shader = LinearGradient(0f, 0f, 0f, height.toFloat(),
-            intArrayOf(Neon.mix(Neon.BG, accent, .28f), Neon.mix(Neon.BG, Neon.PINK, .08f), Neon.BG), floatArrayOf(0f, .45f, 1f), Shader.TileMode.CLAMP)
+            intArrayOf(0xFF2A140B.toInt(), 0xFF170B14.toInt(), Neon.BG), floatArrayOf(0f, .45f, 1f), Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), shade)
         super.onDraw(canvas)
     }
 
-    // swipe down anywhere near the top to close
+    // swipe down from the upper half to close
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> downY = ev.rawY
@@ -206,7 +178,6 @@ class FullPlayerView(
     fun show(parent: ViewGroup) {
         if (this.parent == null) parent.addView(this, ViewGroup.LayoutParams(-1, -1))
         translationY = parent.height.toFloat().takeIf { it > 0 } ?: 2000f
-        alpha = 1f
         animate().translationY(0f).setDuration(380).setInterpolator(DecelerateInterpolator(2f)).start()
     }
 
@@ -219,16 +190,4 @@ class FullPlayerView(
     }
 
     override fun onDetachedFromWindow() { pulse.cancel(); super.onDetachedFromWindow() }
-
-    companion object {
-        fun timeAgo(time: Long): String {
-            val mins = ((System.currentTimeMillis() - time) / 60_000L).coerceAtLeast(0)
-            return when {
-                mins < 1 -> "az önce"
-                mins < 60 -> "$mins dk önce"
-                mins < 60 * 24 -> "${mins / 60} sa önce"
-                else -> "${mins / (60 * 24)} gün önce"
-            }
-        }
-    }
 }

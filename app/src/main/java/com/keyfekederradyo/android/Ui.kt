@@ -97,3 +97,46 @@ class Ui(val context: Context) {
         }
     }
 }
+
+/** Neon on/off switch: the knob slides, the track lights up in the brand gradient when on. */
+class NeonSwitch(context: android.content.Context, initial: Boolean, private val onChange: (Boolean) -> Unit) : View(context) {
+    private val track = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val knob = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Neon.TEXT }
+    private val glow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private var position = if (initial) 1f else 0f
+    var checked = initial
+        private set
+
+    init {
+        isClickable = true; isFocusable = true
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
+        setOnClickListener { toggle() }
+    }
+
+    fun toggle() {
+        checked = !checked
+        android.animation.ValueAnimator.ofFloat(position, if (checked) 1f else 0f).apply {
+            duration = 220
+            addUpdateListener { position = it.animatedValue as Float; invalidate() }
+            start()
+        }
+        onChange(checked)
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        val pad = Neon.dp(context, 4f)
+        val h = height - pad * 2; val w = width - pad * 2
+        val r = h / 2
+        if (position > 0f) {
+            glow.color = Neon.withAlpha(Neon.ORANGE, (120 * position).toInt())
+            glow.maskFilter = android.graphics.BlurMaskFilter(pad, android.graphics.BlurMaskFilter.Blur.OUTER)
+            canvas.drawRoundRect(pad, pad, pad + w, pad + h, r, r, glow)
+        }
+        track.shader = android.graphics.LinearGradient(pad, 0f, pad + w, 0f,
+            Neon.mix(0x33FFFFFF, Neon.ORANGE, position), Neon.mix(0x33FFFFFF, Neon.PINK, position), android.graphics.Shader.TileMode.CLAMP)
+        canvas.drawRoundRect(pad, pad, pad + w, pad + h, r, r, track)
+        val inset = Neon.dp(context, 3f)
+        val cx = pad + r + (w - h) * position
+        canvas.drawCircle(cx, pad + r, r - inset, knob)
+    }
+}

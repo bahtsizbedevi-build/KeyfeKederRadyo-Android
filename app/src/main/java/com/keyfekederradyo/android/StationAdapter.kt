@@ -1,13 +1,11 @@
 package com.keyfekederradyo.android
 
 import android.annotation.SuppressLint
-import android.graphics.Color
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
@@ -65,12 +63,8 @@ class StationAdapter(
         column.addView(meta, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
         column.addView(live, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
         card.addView(column, FrameLayout.LayoutParams(-1, -1))
-        val fav = ImageView(parent.context).apply {
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
-            isClickable = true
-        }
-        card.addView(fav, FrameLayout.LayoutParams(ui.dp(42), ui.dp(42), Gravity.TOP or Gravity.END).apply { topMargin = ui.dp(4); rightMargin = ui.dp(4) })
+        val fav = FavoriteButton(parent.context, 21f)
+        card.addView(fav, FrameLayout.LayoutParams(ui.dp(46), ui.dp(46), Gravity.TOP or Gravity.END).apply { topMargin = ui.dp(2); rightMargin = ui.dp(2) })
         return Holder(card, logo, title, meta, live, fav)
     }
 
@@ -78,9 +72,8 @@ class StationAdapter(
         val station = items[position]
         val ui = Ui(holder.itemView.context)
         val active = station.resolvedUrl == playingUrl
-        val accent = StationArtworkView.accentFor(station.genre)
         holder.itemView.background = if (active)
-            ui.glass(26f, Neon.withAlpha(accent, 150), gradient = intArrayOf(Neon.withAlpha(accent, 70), 0x26FF2E88, 0x14FFFFFF))
+            ui.glass(26f, Neon.withAlpha(Neon.ORANGE, 150), gradient = intArrayOf(0x47FF7A1A, 0x26FF2E88, 0x14FFFFFF))
         else ui.glass(26f)
         holder.logo.bind(station.name, station.genre, station.logoUrl)
         holder.logo.setPlaying(active)
@@ -89,12 +82,8 @@ class StationAdapter(
         holder.meta.text = listOf(station.genre, station.country).filter { it.isNotBlank() }.distinct().joinToString(" • ").ifBlank { "Canlı radyo" }
         holder.live.visibility = if (active) View.VISIBLE else View.GONE
 
-        val favorite = isFavorite(station)
-        holder.fav.setImageResource(if (favorite) R.drawable.ic_heart else R.drawable.ic_heart_outline)
-        holder.fav.setColorFilter(if (favorite) Neon.PINK else Color.WHITE)
-        holder.fav.alpha = if (favorite) 1f else .7f
-        holder.fav.contentDescription = if (favorite) "Favorilerden çıkar" else "Favorilere ekle"
-        holder.fav.setOnClickListener { Ui.pop(it); onFavorite(station) }
+        holder.fav.setOn(isFavorite(station))
+        holder.fav.setOnClickListener { holder.fav.animateTo(!holder.fav.isOn); onFavorite(station) }
         holder.itemView.setOnClickListener { Ui.pop(it); onClick(station) }
 
         if (position >= animateFrom) {
@@ -114,6 +103,6 @@ class StationAdapter(
 
     class Holder(
         view: View, val logo: StationArtworkView, val title: TextView, val meta: TextView,
-        val live: TextView, val fav: ImageView,
+        val live: TextView, val fav: FavoriteButton,
     ) : RecyclerView.ViewHolder(view)
 }

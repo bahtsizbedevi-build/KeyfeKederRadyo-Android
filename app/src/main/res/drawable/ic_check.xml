@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Phosphor Icons "caret-down" (bold), MIT License -->
+<!-- Phosphor Icons "check" (bold), MIT License -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="256" android:viewportHeight="256">
-    <path android:fillColor="#FFFFFFFF" android:pathData="M216.49,104.49l-80,80a12,12,0,0,1-17,0l-80-80a12,12,0,0,1,17-17L128,159l71.51-71.52a12,12,0,0,1,17,17Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z"/>
 </vector>

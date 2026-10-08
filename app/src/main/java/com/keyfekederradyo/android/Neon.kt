@@ -32,6 +32,9 @@ object Neon {
     const val VIOLET = 0xFF8B5CFF.toInt()
     const val CYAN = 0xFF2EE6D6.toInt()
 
+    /** The one brand gradient used by every button, glow and highlight. */
+    val BRAND = intArrayOf(ORANGE, PINK)
+
     fun dp(context: Context, v: Float) = v * context.resources.displayMetrics.density
     fun dp(context: Context, v: Int) = (v * context.resources.displayMetrics.density).toInt()
 
@@ -97,14 +100,17 @@ class GlassDrawable(
     override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
 
-/** Slowly drifting neon light blobs behind the whole UI, tinted with the playing station's colour. */
+/**
+ * Slowly drifting neon lights behind the whole UI, always in the brand colours.
+ * With music playing the lights breathe with the bass; [motion] = false keeps them still.
+ */
 class AmbientBackgroundView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var accent = Neon.ORANGE
-    private var targetAccent = Neon.ORANGE
     private var t = 0f
     private var energy = 0f
     private val levels = FloatArray(SpectrumAnalyzer.BANDS)
+    var motion = true
+        set(value) { field = value; if (value && isAttachedToWindow) animator.start() else animator.cancel(); invalidate() }
     private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = 1000; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
         addUpdateListener { tick() }
@@ -112,26 +118,22 @@ class AmbientBackgroundView(context: Context) : View(context) {
 
     init { setLayerType(LAYER_TYPE_HARDWARE, null) }
 
-    fun setAccent(color: Int) { targetAccent = color }
-
     private fun tick() {
         t += 0.0045f
-        accent = Neon.mix(accent, targetAccent, 0.04f)
-        // bass energy makes the lights breathe with the music
         val e = if (SpectrumAnalyzer.read(levels)) (levels[0] + levels[1] + levels[2] + levels[3]) / 4f else 0f
         energy += (e - energy) * 0.12f
         invalidate()
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); animator.start() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); if (motion) animator.start() }
     override fun onDetachedFromWindow() { animator.cancel(); super.onDetachedFromWindow() }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
         canvas.drawColor(Neon.BG)
-        blob(canvas, w * (.18f + .08f * sin(t * 2.1f)), h * (.10f + .05f * cos(t * 1.7f)), w * (.85f + .25f * energy), accent, 70 + (60 * energy).toInt())
-        blob(canvas, w * (.92f + .06f * cos(t * 1.3f)), h * (.42f + .08f * sin(t * 1.1f)), w * .75f, Neon.mix(accent, Neon.PINK, .6f), 42 + (40 * energy).toInt())
-        blob(canvas, w * (.25f + .1f * sin(t * .9f)), h * (.88f + .04f * cos(t * 1.9f)), w * .8f, Neon.mix(accent, Neon.VIOLET, .7f), 38)
+        blob(canvas, w * (.18f + .08f * sin(t * 2.1f)), h * (.10f + .05f * cos(t * 1.7f)), w * (.85f + .25f * energy), Neon.ORANGE, 62 + (55 * energy).toInt())
+        blob(canvas, w * (.92f + .06f * cos(t * 1.3f)), h * (.42f + .08f * sin(t * 1.1f)), w * .75f, Neon.PINK, 34 + (36 * energy).toInt())
+        blob(canvas, w * (.25f + .1f * sin(t * .9f)), h * (.88f + .04f * cos(t * 1.9f)), w * .8f, Neon.VIOLET, 30)
     }
 
     private fun blob(canvas: Canvas, x: Float, y: Float, r: Float, color: Int, alpha: Int) {

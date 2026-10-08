@@ -77,7 +77,7 @@ class StationArtworkView(context: Context) : View(context) {
         val pulse = if (active) (0.5f + 0.5f * sin(phase.toDouble())).toFloat() else 0f
 
         if (active) {
-            glowPaint.color = accent
+            glowPaint.color = Neon.ORANGE
             glowPaint.alpha = (110 + 110 * pulse).toInt()
             glowPaint.maskFilter = BlurMaskFilter(inset * 1.6f + 1f, BlurMaskFilter.Blur.OUTER)
             canvas.drawRoundRect(rect, radius, radius, glowPaint)
@@ -116,7 +116,7 @@ class StationArtworkView(context: Context) : View(context) {
         canvas.restore()
 
         rimPaint.strokeWidth = maxOf(1.5f, w * .012f)
-        rimPaint.color = if (active) accent else 0x33FFFFFF
+        rimPaint.color = if (active) Neon.ORANGE else 0x33FFFFFF
         rimPaint.alpha = if (active) (150 + 105 * pulse).toInt() else 60
         canvas.drawRoundRect(rect, radius, radius, rimPaint)
 

@@ -116,10 +116,11 @@ jobs:
           # Key password check (PKCS12 keystores require key password == store password)
           case "$MAGIC" in
             30*)
+              # PKCS12 has a single password: the store password also unlocks the key
               if [ "$PLAY_KEY_PASSWORD" != "$PLAY_KEYSTORE_PASSWORD" ]; then
-                echo "::error::This is a PKCS12 keystore: PLAY_KEY_PASSWORD must be the same as PLAY_KEYSTORE_PASSWORD, but they differ."
-                exit 1
-              fi ;;
+                echo "::notice::PKCS12 keystore: PLAY_KEY_PASSWORD differs from PLAY_KEYSTORE_PASSWORD; using PLAY_KEYSTORE_PASSWORD for the key."
+              fi
+              echo "KEYSTORE_IS_PKCS12=1" >> "$GITHUB_ENV" ;;
             *)
               if ! keytool -certreq -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD -alias "$PLAY_KEY_ALIAS" -keypass:env PLAY_KEY_PASSWORD -file /dev/null > /dev/null 2>&1; then
                 echo "::error::PLAY_KEY_PASSWORD is wrong for the key in this keystore."
@@ -138,6 +139,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.PLAY_KEY_PASSWORD }}
         run: |
           set -o pipefail
+          if [ "${KEYSTORE_IS_PKCS12:-}" = 1 ]; then export KEY_PASSWORD="$KEYSTORE_PASSWORD"; fi
           if ! gradle bundleRelease --no-daemon 2>&1 | tee "$RUNNER_TEMP/gradle.log"; then
             # Surface the real Gradle error in the run summary
             grep -A 12 -E 'What went wrong|^e: |Lint found' "$RUNNER_TEMP/gradle.log" | head -40 | while IFS= read -r line; do
@@ -153,6 +155,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.PLAY_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          if [ "${KEYSTORE_IS_PKCS12:-}" = 1 ]; then export KEY_PASSWORD="$KEYSTORE_PASSWORD"; fi
           AAB=app/build/outputs/bundle/release/app-release.aab
           test -f "$AAB" || { echo "::error::$AAB not found"; exit 1; }
 

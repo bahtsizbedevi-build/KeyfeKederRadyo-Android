@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="12dp">
+
+    <ImageView
+        android:id="@+id/widget_logo"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:background="@drawable/widget_logo_bg"
+        android:contentDescription="@string/app_name"
+        android:padding="6dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/keyfe_keder_brand" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_live"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:letterSpacing="0.12"
+            android:text="KEYFE KEDER"
+            android:textColor="#FFFF7A1A"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Bir radyo seç"
+            android:textColor="#FFF6F3FF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Dokun, keyfine göre çalsın"
+            android:textColor="#FF9C98AD"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/widget_prev"
+        android:layout_width="38dp"
+        android:layout_height="38dp"
+        android:background="@drawable/widget_btn_bg"
+        android:contentDescription="Önceki radyo"
+        android:src="@drawable/ic_prev" />
+
+    <ImageButton
+        android:id="@+id/widget_play"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:layout_marginStart="6dp"
+        android:layout_marginEnd="6dp"
+        android:background="@drawable/widget_play_bg"
+        android:contentDescription="Çal / duraklat"
+        android:src="@drawable/ic_play" />
+
+    <ImageButton
+        android:id="@+id/widget_next"
+        android:layout_width="38dp"
+        android:layout_height="38dp"
+        android:background="@drawable/widget_btn_bg"
+        android:contentDescription="Sonraki radyo"
+        android:src="@drawable/ic_next" />
+</LinearLayout>

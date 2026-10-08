@@ -105,7 +105,39 @@ class RadioPlaybackService : MediaLibraryService() {
         handler.post(timerRunnable)
     }
 
+    private var widgetLogoUrl = ""
+    private var widgetLogo: android.graphics.Bitmap? = null
+
+    /** Keeps the home-screen widget in sync with the station, song and play state. */
+    private fun updateWidget() {
+        val item = player.currentMediaItem
+        val station = item?.let { byUrl[it.mediaId] }
+        if (station == null) { RadioWidget.update(this, "Bir radyo seç", "Dokun, keyfine göre çalsın", false, null); return }
+        val meta = player.mediaMetadata
+        val hasTrack = meta.extras?.getBoolean(StationMedia.EXTRA_HAS_TRACK) == true
+        val title = if (hasTrack) meta.title?.toString() ?: station.name else station.name
+        val subtitle = when {
+            hasTrack -> listOfNotNull(meta.artist?.toString()?.takeIf { it != StationMedia.LIVE }, station.name).joinToString(" • ")
+            player.playbackState == Player.STATE_BUFFERING -> "Bağlanıyor…"
+            player.isPlaying -> "Canlı yayın • ${station.genre.ifBlank { "Radyo" }}"
+            else -> "Duraklatıldı"
+        }
+        val playing = player.isPlaying || player.playbackState == Player.STATE_BUFFERING && player.playWhenReady
+        if (station.logoUrl != widgetLogoUrl) {
+            widgetLogoUrl = station.logoUrl; widgetLogo = null
+            if (station.logoUrl.isNotBlank()) StationImageLoader.load(station.logoUrl) { bmp ->
+                if (widgetLogoUrl == station.logoUrl) { widgetLogo = bmp; updateWidget() }
+            }
+        }
+        RadioWidget.update(this, title, subtitle, playing, widgetLogo)
+    }
+
     private val playerListener = object : Player.Listener {
+        override fun onEvents(player: Player, events: Player.Events) {
+            if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION,
+                    Player.EVENT_MEDIA_METADATA_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED)) updateWidget()
+        }
+
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             reconnectAttempt = 0
             mediaItem?.mediaId?.let { prefs.edit().putString("last_url", it).apply() }

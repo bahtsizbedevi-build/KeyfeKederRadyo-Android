@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "com.keyfekederradyo.android"
     compileSdk = 36
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "com.keyfekederradyo.android"

@@ -194,8 +194,12 @@ jobs:
           $BT validate --bundle "$AAB" > /dev/null
 
           # 3) Build an APK set signed with the same key and verify with apksigner
+          # bundletool takes passwords only as pass: or file: - use short-lived 600 files, never the command line
+          ( umask 077; printf '%s' "$KEYSTORE_PASSWORD" > "$RUNNER_TEMP/ks.pass"; printf '%s' "$KEY_PASSWORD" > "$RUNNER_TEMP/key.pass" )
           $BT build-apks --bundle "$AAB" --output "$RUNNER_TEMP/app.apks" --mode universal \
-            --ks "$KEYSTORE_FILE" --ks-pass env:KEYSTORE_PASSWORD --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD
+            --ks "$KEYSTORE_FILE" --ks-pass "file:$RUNNER_TEMP/ks.pass" --ks-key-alias "$KEY_ALIAS" --key-pass "file:$RUNNER_TEMP/key.pass" \
+            || { rm -f "$RUNNER_TEMP/ks.pass" "$RUNNER_TEMP/key.pass"; echo "::error::bundletool build-apks failed"; exit 1; }
+          rm -f "$RUNNER_TEMP/ks.pass" "$RUNNER_TEMP/key.pass"
           mkdir -p "$RUNNER_TEMP/apks" && unzip -o -q "$RUNNER_TEMP/app.apks" -d "$RUNNER_TEMP/apks"
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           "$APKSIGNER" verify --verbose --print-certs "$RUNNER_TEMP/apks/universal.apk" | grep -E 'Verified using|Signer #1 certificate (DN|SHA-256)'
@@ -222,4 +226,4 @@ jobs:
 
       - name: Remove keystore
         if: always()
-        run: rm -f "$RUNNER_TEMP/play-release.keystore" "$RUNNER_TEMP/app.apks"; rm -rf "$RUNNER_TEMP/apks"
+        run: rm -f "$RUNNER_TEMP/play-release.keystore" "$RUNNER_TEMP/app.apks" "$RUNNER_TEMP/ks.pass" "$RUNNER_TEMP/key.pass"; rm -rf "$RUNNER_TEMP/apks"

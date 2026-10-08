@@ -40,6 +40,7 @@ class FullPlayerView(
     private val onFavorite: () -> Unit,
     private val onSleep: () -> Unit,
     private val onShare: () -> Unit,
+    private val onOutput: () -> Unit,
 ) : FrameLayout(context) {
     private val ui = Ui(context)
     private val shade = Paint()
@@ -58,6 +59,8 @@ class FullPlayerView(
     private val playIcon = ImageView(context).apply { setColorFilter(Neon.TEXT); scaleType = ImageView.ScaleType.CENTER_INSIDE }
     private val playButton = FrameLayout(context)
     private val sleepText = ui.text("Uyku", 11.5f, Neon.MUTED).apply { gravity = Gravity.CENTER }
+    private val outputText = ui.text("Hoparlör", 11.5f, Neon.MUTED).apply { gravity = Gravity.CENTER }
+    private var outputIcon: ImageView? = null
     private val pulse = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = 1600; repeatCount = ValueAnimator.INFINITE; repeatMode = ValueAnimator.REVERSE
         addUpdateListener { val v = it.animatedValue as Float; playButton.scaleX = 1f + .04f * v; playButton.scaleY = 1f + .04f * v }
@@ -84,12 +87,12 @@ class FullPlayerView(
         }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
         column.addView(top, LinearLayout.LayoutParams(-1, ui.dp(56)))
 
-        column.addView(artwork, LinearLayout.LayoutParams(ui.dp(272), ui.dp(272)).apply { topMargin = ui.dp(20); bottomMargin = ui.dp(24) })
+        column.addView(artwork, LinearLayout.LayoutParams(ui.dp(236), ui.dp(236)).apply { topMargin = ui.dp(10); bottomMargin = ui.dp(18) })
         column.addView(liveBadge, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(10) })
         column.addView(songView, LinearLayout.LayoutParams(-1, -2))
         column.addView(artistView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
         column.addView(stationChip, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(14); gravity = Gravity.CENTER_HORIZONTAL })
-        column.addView(spectrum, LinearLayout.LayoutParams(-1, ui.dp(132)).apply { topMargin = ui.dp(12) })
+        column.addView(spectrum, LinearLayout.LayoutParams(-1, ui.dp(104)).apply { topMargin = ui.dp(8) })
 
         val controls = LinearLayout(context).apply { gravity = Gravity.CENTER }
         controls.addView(ui.iconButton(R.drawable.ic_prev, "Önceki radyo", 60, 26) { onPrev() })
@@ -100,12 +103,15 @@ class FullPlayerView(
         }
         controls.addView(playButton, LinearLayout.LayoutParams(ui.dp(88), ui.dp(88)).apply { setMargins(ui.dp(26), 0, ui.dp(26), 0) })
         controls.addView(ui.iconButton(R.drawable.ic_next, "Sonraki radyo", 60, 26) { onNext() })
-        column.addView(controls, LinearLayout.LayoutParams(-1, ui.dp(112)).apply { topMargin = ui.dp(4) })
+        column.addView(controls, LinearLayout.LayoutParams(-1, ui.dp(100)))
 
         val actions = LinearLayout(context).apply { gravity = Gravity.CENTER }
         actions.addView(action(R.drawable.ic_timer, sleepText) { onSleep() })
+        actions.addView(action(R.drawable.ic_bluetooth, outputText) { onOutput() }.also { box ->
+            outputIcon = ((box as LinearLayout).getChildAt(0) as FrameLayout).getChildAt(0) as ImageView
+        })
         actions.addView(action(R.drawable.ic_share, ui.text("Paylaş", 11.5f, Neon.MUTED)) { onShare() })
-        column.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
+        column.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(2) })
     }
 
     private fun action(icon: Int, label: TextView, onClick: () -> Unit): View {
@@ -119,7 +125,8 @@ class FullPlayerView(
         }, LinearLayout.LayoutParams(ui.dp(58), ui.dp(58)))
         label.gravity = Gravity.CENTER
         box.addView(label, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(6) })
-        return box.apply { layoutParams = LinearLayout.LayoutParams(ui.dp(110), -2) }
+        label.maxLines = 1; label.ellipsize = TextUtils.TruncateAt.END
+        return box.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
     }
 
     /** [animateFavorite] = the user just tapped the heart. */
@@ -144,6 +151,9 @@ class FullPlayerView(
         playIcon.setImageResource(if (state.playing || state.buffering) R.drawable.ic_pause else R.drawable.ic_play)
         playButton.background = GlassDrawable(context, 44f, Neon.ORANGE, 0x55FFFFFF, Neon.withAlpha(Neon.ORANGE, if (state.playing) 190 else 90), Neon.BRAND)
         if (state.playing) { if (!pulse.isStarted) pulse.start() } else { pulse.cancel(); playButton.scaleX = 1f; playButton.scaleY = 1f }
+        val out = AudioOutput.current(context)
+        outputText.text = out?.let { AudioOutput.name(it) } ?: "Telefon hoparlörü"
+        outputIcon?.setImageResource(AudioOutput.icon(out))
         sleepText.text = state.sleepLabel ?: "Uyku"
         sleepText.setTextColor(if (state.sleepLabel != null) Neon.ORANGE else Neon.MUTED)
     }

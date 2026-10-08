@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Neon widget card: soft brand glow edge around a deep plum-to-amber glass -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="26dp" />
-            <gradient android:angle="315" android:startColor="#F2140F1C" android:centerColor="#F21A0F17" android:endColor="#F2261208" />
-            <stroke android:width="1dp" android:color="#55FF7A1A" />
+            <corners android:radius="28dp" />
+            <gradient android:angle="0" android:startColor="#66FF7A1A" android:endColor="#66FF2E88" />
+        </shape>
+    </item>
+    <item android:bottom="1.5dp" android:left="1.5dp" android:right="1.5dp" android:top="1.5dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="27dp" />
+            <gradient android:angle="315" android:startColor="#F5120D1A" android:centerColor="#F5190D16" android:endColor="#F5281308" />
         </shape>
     </item>
 </layer-list>

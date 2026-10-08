@@ -31,6 +31,9 @@ ICONS = {
     "ic_genre": ("regular", "squares-four"), "ic_exit": ("regular", "sign-out"),
     "ic_play_circle": ("fill", "play-circle"), "ic_history": ("regular", "clock-counter-clockwise"),
     "ic_shield": ("regular", "shield-check"), "ic_sliders": ("regular", "sliders-horizontal"),
+    "ic_bluetooth": ("bold", "bluetooth"), "ic_speaker": ("fill", "speaker-high"),
+    "ic_devices": ("regular", "devices"), "ic_usb": ("bold", "usb"), "ic_bell": ("regular", "bell-ringing"),
+    "ic_sun": ("fill", "sun-horizon"), "ic_television": ("regular", "television"), "ic_gear_small": ("regular", "gear"),
 }
 
 TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>

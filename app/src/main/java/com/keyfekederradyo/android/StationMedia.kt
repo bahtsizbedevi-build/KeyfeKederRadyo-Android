@@ -13,9 +13,9 @@ object StationMedia {
     const val EXTRA_HAS_TRACK = "has_track"
     const val LIVE = "CANLI"
 
-    fun artworkUri(context: Context, station: Station): Uri =
-        if (station.logoUrl.isNotBlank()) Uri.parse(station.logoUrl)
-        else Uri.parse("android.resource://${context.packageName}/drawable/station_artwork_default")
+    /** Branded neon cover, rendered by [CoverArtBitmapLoader] for the notification, lock screen and Auto. */
+    @Suppress("UNUSED_PARAMETER")
+    fun artworkUri(context: Context, station: Station): Uri = CoverArt.uri(station)
 
     /** Metadata shown while no song title is known: the station name, marked live. */
     fun stationMetadata(context: Context, station: Station): MediaMetadata = MediaMetadata.Builder()

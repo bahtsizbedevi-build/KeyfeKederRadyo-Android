@@ -19,6 +19,7 @@ install() { "$ADB" install -r "$(cygpath -w "$PROJECT/app/build/outputs/apk/debu
 run()     { "$ADB" shell am force-stop $PKG; "$ADB" shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null; }
 # Taps only when our app is the focused window, so a stray tap can never hit another app or the launcher
 tap()     { "$ADB" shell dumpsys window | grep -q "mCurrentFocus=.*$PKG" || { echo "not in app, tap skipped"; return 1; }; "$ADB" shell input tap "$1" "$2"; }
+swipe()   { "$ADB" shell dumpsys window | grep -q "mCurrentFocus=.*$PKG" || { echo "not in app, swipe skipped"; return 1; }; "$ADB" shell input swipe "$1" "$2" "$3" "$4" "${5:-400}"; }
 shot()    { mkdir -p "$SHOTS"; "$ADB" exec-out screencap -p > "$SHOTS/${1:-shot}.png"; echo "$SHOTS/${1:-shot}.png"; }
 
 case "$1" in
@@ -27,6 +28,7 @@ case "$1" in
   run) run ;;
   shot) shot "$2" ;;
   tap) tap "$2" "$3" ;;
+  swipe) swipe "$2" "$3" "$4" "$5" "$6" ;;
   all) build && install && run && sleep 6 && shot "$2" ;;
   log) "$ADB" logcat -d -t 300 | grep -iE "keyfe|AndroidRuntime|ExoPlayer|FATAL" ;;
   *) echo "usage: $0 build|install|run|tap x y|shot [name]|all [name]|log"; exit 1 ;;

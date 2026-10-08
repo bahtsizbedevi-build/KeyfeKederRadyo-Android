@@ -10,11 +10,9 @@
 
     <ImageView
         android:id="@+id/widget_logo"
-        android:layout_width="64dp"
-        android:layout_height="64dp"
-        android:background="@drawable/widget_logo_bg"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
         android:contentDescription="@string/app_name"
-        android:padding="6dp"
         android:scaleType="fitCenter"
         android:src="@drawable/keyfe_keder_brand" />
 

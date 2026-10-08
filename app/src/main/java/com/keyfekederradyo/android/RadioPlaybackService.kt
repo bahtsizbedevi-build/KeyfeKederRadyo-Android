@@ -68,6 +68,8 @@ class RadioPlaybackService : MediaLibraryService() {
             handler.removeCallbacks(timerRunnable)
             handler.post(timerRunnable)
         }
+        // favourite toggled in the app: keep the notification heart in sync
+        if (::player.isInitialized && key == player.currentMediaItem?.mediaId) refreshFavoriteButton()
     }
 
     override fun onCreate() {
@@ -101,6 +103,8 @@ class RadioPlaybackService : MediaLibraryService() {
         )
         session = MediaLibrarySession.Builder(this, player, LibraryCallback())
             .setSessionActivity(sessionActivity)
+            .setBitmapLoader(CoverArtBitmapLoader(this))
+            .setMediaButtonPreferences(ImmutableList.of(favoriteButton()))
             .build()
         handler.post(timerRunnable)
     }
@@ -125,8 +129,9 @@ class RadioPlaybackService : MediaLibraryService() {
         val playing = player.isPlaying || player.playbackState == Player.STATE_BUFFERING && player.playWhenReady
         if (station.logoUrl != widgetLogoUrl) {
             widgetLogoUrl = station.logoUrl; widgetLogo = null
-            if (station.logoUrl.isNotBlank()) StationImageLoader.load(station.logoUrl) { bmp ->
-                if (widgetLogoUrl == station.logoUrl) { widgetLogo = bmp; updateWidget() }
+            val name = station.name
+            StationImageLoader.load(station.logoUrl) { bmp ->
+                if (widgetLogoUrl == station.logoUrl) { widgetLogo = CoverArt.compose(this, name, bmp, 256, rounded = true); updateWidget() }
             }
         }
         RadioWidget.update(this, title, subtitle, playing, widgetLogo)
@@ -134,6 +139,7 @@ class RadioPlaybackService : MediaLibraryService() {
 
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
+            if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) refreshFavoriteButton()
             if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION,
                     Player.EVENT_MEDIA_METADATA_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED)) updateWidget()
         }
@@ -221,7 +227,53 @@ class RadioPlaybackService : MediaLibraryService() {
 
     // ---- Library: Android Auto / other media browsers, playlist expansion, resumption ----
 
+    // ---- Heart button in the media notification / lock screen ----
+
+    private val favoriteCommand = androidx.media3.session.SessionCommand(ACTION_FAVORITE, android.os.Bundle.EMPTY)
+    private val outputCommand = androidx.media3.session.SessionCommand(ACTION_OUTPUT, android.os.Bundle.EMPTY)
+
+    private fun currentIsFavorite(): Boolean =
+        player.currentMediaItem?.mediaId?.let { prefs.getBoolean(it, false) } == true
+
+    private fun favoriteButton(): androidx.media3.session.CommandButton {
+        val on = ::player.isInitialized && currentIsFavorite()
+        return androidx.media3.session.CommandButton.Builder(
+            if (on) androidx.media3.session.CommandButton.ICON_HEART_FILLED else androidx.media3.session.CommandButton.ICON_HEART_UNFILLED)
+            .setDisplayName(if (on) "Favorilerden çıkar" else "Favorilere ekle")
+            .setSessionCommand(favoriteCommand)
+            .build()
+    }
+
+    private fun refreshFavoriteButton() {
+        if (::session.isInitialized) session.setMediaButtonPreferences(ImmutableList.of(favoriteButton()))
+    }
+
     private inner class LibraryCallback : MediaLibrarySession.Callback {
+        override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult =
+            MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(favoriteCommand).add(outputCommand).build())
+                .setMediaButtonPreferences(ImmutableList.of(favoriteButton()))
+                .build()
+
+        override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
+                                     customCommand: androidx.media3.session.SessionCommand, args: android.os.Bundle):
+            ListenableFuture<androidx.media3.session.SessionResult> {
+            if (customCommand.customAction == ACTION_FAVORITE) {
+                player.currentMediaItem?.mediaId?.let { prefs.edit().putBoolean(it, !prefs.getBoolean(it, false)).apply() }
+                refreshFavoriteButton()
+                return Futures.immediateFuture(androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS))
+            }
+            if (customCommand.customAction == ACTION_OUTPUT) {
+                // route music to the device picked in "Ses çıkışı" (-1 = Android's default routing)
+                val id = args.getInt(EXTRA_DEVICE_ID, -1)
+                val device = if (id < 0) null else AudioOutput.outputs(this@RadioPlaybackService).firstOrNull { it.id == id }
+                player.setPreferredAudioDevice(device)
+                AudioOutput.preferredId = device?.id
+                return Futures.immediateFuture(androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS))
+            }
+            return super.onCustomCommand(session, controller, customCommand, args)
+        }
+
         private fun folder(id: String, title: String) = MediaItem.Builder()
             .setMediaId(id)
             .setMediaMetadata(
@@ -324,5 +376,8 @@ class RadioPlaybackService : MediaLibraryService() {
         const val GENRES = "genres"
         const val ALL = "all"
         const val GENRE_PREFIX = "genre:"
+        const val ACTION_FAVORITE = "keyfe.favorite"
+        const val ACTION_OUTPUT = "keyfe.output"
+        const val EXTRA_DEVICE_ID = "device_id"
     }
 }

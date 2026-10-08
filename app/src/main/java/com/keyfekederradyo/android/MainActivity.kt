@@ -71,6 +71,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stationList: RecyclerView
     private lateinit var adapter: StationAdapter
     private lateinit var mini: FrameLayout
+    private lateinit var dock: FrameLayout
+    private lateinit var dockCard: LinearLayout
     private lateinit var miniArt: StationArtworkView
     private lateinit var miniTitle: TextView
     private lateinit var miniSub: TextView
@@ -84,6 +86,8 @@ class MainActivity : AppCompatActivity() {
         R.drawable.ic_explore to R.drawable.ic_explore_fill, R.drawable.ic_heart_outline to R.drawable.ic_heart)
     private var fullPlayer: FullPlayerView? = null
     private var pickSheet: PickSheetView? = null
+    private var outputSheet: AudioOutputSheet? = null
+    private var pendingPlayUrl: String? = null
     private var systemBars = intArrayOf(0, 0, 0, 0)
 
     private val taglines = listOf("Bir frekans, bin keyif.", "Biraz müzik, biraz keyif.", "Keyfin ne isterse, frekans orada.", "Kafana göre bir radyo bulalım.")
@@ -101,8 +105,34 @@ class MainActivity : AppCompatActivity() {
         })
         handler.postDelayed(taglineRunnable, 3500)
         handler.postDelayed(sleepTicker, 30_000)
+        pendingPlayUrl = intent?.getStringExtra(Reminders.EXTRA_PLAY_URL)
+        Reminders.schedule(this)
         connectPlayer()
         loadStations()
+    }
+
+    /** "X dinle" in a reminder notification. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(Reminders.EXTRA_PLAY_URL)?.let { pendingPlayUrl = it; playPending() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // favourites may have changed from the notification heart; devices from Bluetooth settings
+        if (::scrollContent.isInitialized && stations.isNotEmpty()) {
+            if (page == Page.FAVORITES || page == Page.HOME) showPage(page, keepScroll = true) else if (page == Page.RADIOS || page == Page.LIST) adapter.refresh()
+            refreshPlayerUi()
+        }
+        outputSheet?.refresh()
+    }
+
+    private fun playPending() {
+        val url = pendingPlayUrl ?: return
+        if (controller == null || stations.isEmpty()) return
+        pendingPlayUrl = null
+        autoplayDone = true
+        stations.firstOrNull { it.resolvedUrl == url }?.let { play(it); openFullPlayer() }
     }
 
     override fun onDestroy() {
@@ -143,7 +173,9 @@ class MainActivity : AppCompatActivity() {
         // Android 15+ draws edge-to-edge: keep the UI clear of the status and navigation bars
         ViewCompat.setOnApplyWindowInsetsListener(column) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            // content runs under the floating dock, so only the top/sides are padded here
+            v.setPadding(bars.left, bars.top, bars.right, 0)
+            dock.setPadding(ui.dp(12) + bars.left, ui.dp(30), ui.dp(12) + bars.right, ui.dp(10) + bars.bottom)
             systemBars = intArrayOf(bars.left, bars.top, bars.right, bars.bottom)
             fullPlayer?.let { padForBars(it) }; pickSheet?.let { padForBars(it) }
             insets
@@ -184,8 +216,8 @@ class MainActivity : AppCompatActivity() {
         pages.addView(listPage, FrameLayout.LayoutParams(-1, -1))
         column.addView(pages, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        column.addView(buildMiniPlayer(), LinearLayout.LayoutParams(-1, ui.dp(80)).apply { setMargins(ui.dp(12), ui.dp(6), ui.dp(12), ui.dp(6)) })
-        column.addView(buildNav(), LinearLayout.LayoutParams(-1, ui.dp(70)).apply { setMargins(ui.dp(12), 0, ui.dp(12), ui.dp(8)) })
+        dock = buildDock()
+        root.addView(dock, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         showPage(Page.HOME)
         return root
     }
@@ -212,10 +244,41 @@ class MainActivity : AppCompatActivity() {
         return row
     }
 
-    /** Glass bar: cover, song or station, live line, play and next. Tap opens the player, swipe changes station. */
+    /**
+     * Floating bottom dock: one glass panel holding the mini player and the tabs.
+     * Pages scroll underneath it and fade out through a soft scrim instead of ending at a hard edge.
+     */
+    private fun buildDock(): FrameLayout {
+        val holder = FrameLayout(this).apply {
+            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Neon.withAlpha(Neon.BG, 0), Neon.withAlpha(Neon.BG, 200), Neon.BG))
+            setPadding(ui.dp(12), ui.dp(30), ui.dp(12), ui.dp(10))
+            clipChildren = false; clipToPadding = false
+        }
+        dockCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GlassDrawable(this@MainActivity, 30f, 0xF0151119.toInt(), Neon.STROKE)
+            elevation = ui.dpf(12f)
+        }
+        dockCard.addView(buildMiniPlayer(), LinearLayout.LayoutParams(-1, ui.dp(76)))
+        dockCard.addView(View(this).apply { setBackgroundColor(0x14FFFFFF) }, LinearLayout.LayoutParams(-1, 1).apply { setMargins(ui.dp(18), 0, ui.dp(18), 0) })
+        dockCard.addView(buildNav(), LinearLayout.LayoutParams(-1, ui.dp(66)))
+        holder.addView(dockCard, FrameLayout.LayoutParams(-1, -2))
+        // pages get enough bottom space to scroll their last row above the dock
+        holder.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) {
+                val space = bottom - top - ui.dp(14)
+                scrollContent.setPadding(0, 0, 0, space)
+                stationList.setPadding(ui.dp(9), 0, ui.dp(9), space)
+            }
+        }
+        return holder
+    }
+
+    /** Mini player row: cover, song or station, live line, play and next. Tap opens the player, swipe changes station. */
     private fun buildMiniPlayer(): View {
-        mini = FrameLayout(this).apply { background = ui.glass(26f, fill = 0x30FFFFFF); isClickable = true }
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(12), 0, ui.dp(10), 0) }
+        mini = FrameLayout(this).apply { isClickable = true }
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(12), 0, ui.dp(12), 0) }
         miniArt = StationArtworkView(this)
         row.addView(miniArt, LinearLayout.LayoutParams(ui.dp(56), ui.dp(56)).apply { rightMargin = ui.dp(12) })
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
@@ -223,8 +286,10 @@ class MainActivity : AppCompatActivity() {
             isSingleLine = true; ellipsize = TextUtils.TruncateAt.MARQUEE; marqueeRepeatLimit = -1; isSelected = true
         }
         miniSub = ui.text("Keyfime Bırak'a dokun", 12f, Neon.MUTED)
+        miniSpectrum = AudioSpectrumView(this)
         info.addView(miniTitle, LinearLayout.LayoutParams(-1, -2))
         info.addView(miniSub, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(3) })
+        info.addView(miniSpectrum, LinearLayout.LayoutParams(-1, ui.dp(10)).apply { topMargin = ui.dp(6) })
         row.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
         miniPlayIcon = ImageView(this).apply { setImageResource(R.drawable.ic_play); setColorFilter(Neon.TEXT) }
         miniPlay = FrameLayout(this).apply {
@@ -235,9 +300,6 @@ class MainActivity : AppCompatActivity() {
         row.addView(miniPlay, LinearLayout.LayoutParams(ui.dp(54), ui.dp(54)).apply { leftMargin = ui.dp(8) })
         row.addView(ui.iconButton(R.drawable.ic_next, "Sonraki radyo", 44, 20) { next() }.apply { (layoutParams as LinearLayout.LayoutParams).leftMargin = ui.dp(6) })
         mini.addView(row, FrameLayout.LayoutParams(-1, -1))
-        // a slim live spectrum along the bottom edge
-        miniSpectrum = AudioSpectrumView(this)
-        mini.addView(miniSpectrum, FrameLayout.LayoutParams(-1, ui.dp(10), Gravity.BOTTOM).apply { setMargins(ui.dp(84), 0, ui.dp(120), ui.dp(7)) })
 
         var downX = 0f
         mini.setOnTouchListener { v, e ->
@@ -259,13 +321,13 @@ class MainActivity : AppCompatActivity() {
 
     /** Floating glass bar with a neon pill that slides to the selected tab. */
     private fun buildNav(): View {
-        val bar = FrameLayout(this).apply { background = ui.glass(28f, fill = 0x26FFFFFF) }
+        val bar = FrameLayout(this).apply { setPadding(ui.dp(8), 0, ui.dp(8), 0) }
         navIndicator = View(this).apply {
             background = GlassDrawable(this@MainActivity, 20f, Neon.ORANGE, 0x40FFFFFF, 0, intArrayOf(0x8CFF7A1A.toInt(), 0x73FF2E88))
             alpha = 0f
         }
-        bar.addView(navIndicator, FrameLayout.LayoutParams(0, -1).apply { setMargins(0, ui.dp(7), 0, ui.dp(7)) })
-        navRow = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(ui.dp(6), 0, ui.dp(6), 0) }
+        bar.addView(navIndicator, FrameLayout.LayoutParams(0, -1).apply { setMargins(0, ui.dp(7), 0, ui.dp(9)) })
+        navRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
         listOf("Ana Sayfa" to Page.HOME, "Radyolar" to Page.RADIOS, "Keşfet" to Page.DISCOVER, "Favoriler" to Page.FAVORITES)
             .forEachIndexed { i, (label, target) ->
                 val item = LinearLayout(this).apply {
@@ -301,7 +363,7 @@ class MainActivity : AppCompatActivity() {
         val lp = navIndicator.layoutParams
         val w = target.width - ui.dp(8)
         if (lp.width != w) { lp.width = w; navIndicator.layoutParams = lp }
-        val x = navRow.paddingLeft + target.left + ui.dp(4).toFloat()
+        val x = target.left + ui.dp(4).toFloat()
         navIndicator.animate().alpha(1f).setDuration(150).start()
         if (animate) navIndicator.animate().translationX(x).setDuration(320).setInterpolator(OvershootInterpolator(1.1f)).start()
         else navIndicator.translationX = x
@@ -417,6 +479,23 @@ class MainActivity : AppCompatActivity() {
         play.addView(settingRow(R.drawable.ic_sparkle, "Hareketli arka plan", "Müzikle nefes alan neon ışıklar",
             NeonSwitch(this, ambient.motion) { prefs.edit().putBoolean("ambient_motion", it).apply(); ambient.motion = it }))
         c.addView(wrap(play))
+
+        c.addView(ui.sectionHeader("Bildirimler"))
+        val notes = settingsCard()
+        Reminders.Slot.entries.forEachIndexed { i, slot ->
+            if (i > 0) notes.addView(divider())
+            val title = if (slot == Reminders.Slot.MORNING) "Sabah hatırlatıcısı" else "Akşam hatırlatıcısı"
+            val icon = if (slot == Reminders.Slot.MORNING) R.drawable.ic_sun else R.drawable.ic_moon
+            notes.addView(settingRow(icon, title, "${slot.label} • favori radyonla kısa bir selam",
+                NeonSwitch(this, Reminders.isEnabled(this, slot)) { on ->
+                    Reminders.setEnabled(this, slot, on)
+                    if (on) ensureNotificationsAllowed()
+                }).apply {
+                    // debug builds only: long-press shows the reminder right away for testing
+                    if (BuildConfig.DEBUG) setOnLongClickListener { executor.execute { Reminders.preview(applicationContext, slot) }; true }
+                })
+        }
+        c.addView(wrap(notes))
 
         c.addView(ui.sectionHeader("Radyolar"))
         val data = settingsCard()
@@ -591,14 +670,26 @@ class MainActivity : AppCompatActivity() {
             onClose = { closeFullPlayer() }, onToggle = { togglePlay() }, onPrev = { previous() }, onNext = { next() },
             onFavorite = { nowPlaying().station?.let { setFavorite(it, !isFavorite(it), fromList = false) } },
             onSleep = { chooseSleepTimer() },
-            onShare = { shareNowPlaying() }
+            onShare = { shareNowPlaying() },
+            onOutput = { openOutputs() }
         ).also { padForBars(it); it.show(root); it.bind(state) }
     }
 
     private fun closeFullPlayer() { fullPlayer?.hide { fullPlayer = null } }
 
+    private fun openOutputs() {
+        if (outputSheet != null) return
+        outputSheet = AudioOutputSheet(this, { device ->
+            controller?.sendCustomCommand(
+                androidx.media3.session.SessionCommand(RadioPlaybackService.ACTION_OUTPUT, Bundle.EMPTY),
+                Bundle().apply { putInt(RadioPlaybackService.EXTRA_DEVICE_ID, device?.id ?: -1) })
+            handler.postDelayed({ refreshPlayerUi() }, 300)
+        }, { outputSheet = null; refreshPlayerUi() }).also { padForBars(it); it.show(root) }
+    }
+
     private fun goBack() {
         when {
+            outputSheet != null -> outputSheet?.close()
             pickSheet != null -> pickSheet?.close()
             fullPlayer != null -> closeFullPlayer()
             search.visibility == View.VISIBLE -> toggleSearch()
@@ -664,6 +755,7 @@ class MainActivity : AppCompatActivity() {
                     override fun onPlayerError(error: PlaybackException) { playerError = true; refreshPlayerUi() }
                 })
                 refreshPlayerUi()
+                playPending()
                 maybeAutoplay()
             }, ContextCompat.getMainExecutor(this))
         }
@@ -758,8 +850,8 @@ class MainActivity : AppCompatActivity() {
             miniSpectrum.visibility = if (np.playing) View.VISIBLE else View.INVISIBLE
         }
         miniPlayIcon.setImageResource(if (np.playing || np.buffering) R.drawable.ic_pause else R.drawable.ic_play)
-        miniPlay.background = GlassDrawable(this, 27f, Neon.ORANGE, 0x55FFFFFF, Neon.withAlpha(Neon.ORANGE, if (np.playing) 170 else 70), Neon.BRAND)
-        mini.background = ui.glass(26f, if (np.playing) Neon.withAlpha(Neon.ORANGE, 70) else 0, fill = 0x30FFFFFF)
+        miniPlay.background = GlassDrawable(this, 27f, Neon.ORANGE, 0x55FFFFFF, 0, Neon.BRAND)
+        dockCard.background = GlassDrawable(this, 30f, 0xF0151119.toInt(), if (np.playing) 0x88FF7A1A.toInt() else Neon.STROKE)
         fullPlayer?.bind(np, animateFavorite)
     }
 
@@ -785,6 +877,7 @@ class MainActivity : AppCompatActivity() {
         stations = loaded
         if (page == Page.LIST && search.text.isNotBlank()) searchFor(search.text.toString()) else showPage(page, keepScroll = page == Page.SETTINGS)
         refreshPlayerUi()
+        playPending()
         maybeAutoplay()
     }
 
@@ -821,6 +914,18 @@ class MainActivity : AppCompatActivity() {
             && !prefs.getBoolean("asked_notifications", false)) {
             prefs.edit().putBoolean("asked_notifications", true).apply()
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+        }
+    }
+
+    /** Reminders need the notification permission; ask, or send the user to the app's notification settings. */
+    private fun ensureNotificationsAllowed() {
+        if (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        if (!prefs.getBoolean("asked_notifications", false) || shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
+            prefs.edit().putBoolean("asked_notifications", true).apply()
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+        } else {
+            toast("Bildirimler kapalı. Açmak için ayarlara götürüyorum.")
+            startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
         }
     }
 

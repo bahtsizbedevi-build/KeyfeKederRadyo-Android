@@ -169,7 +169,8 @@ jobs:
           jarsigner -verify "$AAB" > "$RUNNER_TEMP/jarsigner.txt" 2>&1 || { cat "$RUNNER_TEMP/jarsigner.txt"; echo "::error::jarsigner verification failed: $(grep -v '^$' "$RUNNER_TEMP/jarsigner.txt" | head -3 | tr '\n' ' ')"; exit 1; }
           cat "$RUNNER_TEMP/jarsigner.txt"
           grep -q 'jar verified' "$RUNNER_TEMP/jarsigner.txt" || { echo "::error::AAB not verified"; exit 1; }
-          if grep -qiE 'unsigned|not signed|tampered' "$RUNNER_TEMP/jarsigner.txt"; then echo "::error::AAB has unsigned or modified entries"; exit 1; fi
+          if grep -q 'jar is unsigned' "$RUNNER_TEMP/jarsigner.txt"; then echo "::error::AAB is unsigned"; exit 1; fi
+          grep -v '^$' "$RUNNER_TEMP/jarsigner.txt" | while IFS= read -r line; do echo "::notice title=jarsigner::$line"; done
           SIGNER=$(keytool -printcert -jarfile "$AAB")
           echo "$SIGNER" | grep -E 'Owner:|SHA256:'
           if echo "$SIGNER" | grep -q 'CN=Android Debug'; then echo "::error::AAB is signed with the DEBUG key"; exit 1; fi

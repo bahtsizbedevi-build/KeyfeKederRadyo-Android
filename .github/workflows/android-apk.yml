@@ -91,15 +91,29 @@ jobs:
           PLAY_KEY_ALIAS: ${{ secrets.PLAY_KEY_ALIAS }}
         run: |
           KS="$RUNNER_TEMP/play-release.keystore"
-          printf '%s' "$PLAY_KEYSTORE_BASE64" | base64 --decode > "$KS"
+          # Accept plain base64, wrapped lines, CRLF, or certutil -encode output (BEGIN/END header lines)
+          printf '%s' "$PLAY_KEYSTORE_BASE64" | grep -v -e '-----' | tr -d ' \r\n\t' > "$RUNNER_TEMP/ks.b64"
+          if ! base64 --decode "$RUNNER_TEMP/ks.b64" > "$KS" 2>/dev/null; then
+            rm -f "$RUNNER_TEMP/ks.b64"
+            echo "::error::PLAY_KEYSTORE_BASE64 is not valid base64. Re-create it from the .jks/.keystore file (see docs/google-play-release.md)."
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/ks.b64"
           chmod 600 "$KS"
+          MAGIC=$(head -c 4 "$KS" | od -An -tx1 | tr -d ' \n')
+          echo "Decoded keystore: $(stat -c %s "$KS") bytes, header $MAGIC (feedfeed=JKS, 30xx=PKCS12)"
+          if ! keytool -list -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD > /dev/null 2>&1; then
+            echo "::error::Keystore could not be opened. Either PLAY_KEYSTORE_BASE64 is not a keystore file or PLAY_KEYSTORE_PASSWORD is wrong."
+            exit 1
+          fi
           if ! keytool -list -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD -alias "$PLAY_KEY_ALIAS" > /dev/null 2>&1; then
-            echo "::error::Keystore could not be opened, or alias not found. Check PLAY_KEYSTORE_BASE64 / PLAY_KEYSTORE_PASSWORD / PLAY_KEY_ALIAS."
+            echo "::error::Keystore opened, but alias from PLAY_KEY_ALIAS was not found. Aliases in this keystore:"
+            keytool -list -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD | grep -iE 'PrivateKeyEntry' | cut -d, -f1
             exit 1
           fi
           echo "Upload key certificate (public info - compare with Play Console > App integrity > Upload key certificate):"
           keytool -list -v -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD -alias "$PLAY_KEY_ALIAS" \
-            | grep -E 'Owner:|SHA1:|SHA256:|Valid from'
+            | grep -E 'Owner:|SHA1:|SHA256:|Valid from' || true
           echo "KEYSTORE_FILE=$KS" >> "$GITHUB_ENV"
 
       - name: Build release AAB

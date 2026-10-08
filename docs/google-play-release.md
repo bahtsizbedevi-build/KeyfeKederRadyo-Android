@@ -22,6 +22,14 @@ Gerekli GitHub Actions secrets:
 - `PLAY_KEY_ALIAS`
 - `PLAY_KEY_PASSWORD`
 
+`PLAY_KEYSTORE_BASE64` değeri, keystore dosyasının (`.jks` / `.keystore`) tek satır base64 hâlidir. Windows PowerShell'de:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\yol\upload-keystore.jks")) | Set-Clipboard
+```
+
+Panodaki metnin tamamını secret değeri olarak yapıştırın. Keystore dosyasını veya bu metni repoya eklemeyin.
+
 ## Mağaza bilgileri
 
 **Uygulama adı:** Keyfe Keder Radyo

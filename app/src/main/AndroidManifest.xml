@@ -53,9 +53,9 @@
                 android:resource="@xml/radio_widget_info" />
         </receiver>
 
-        <!-- Daily reminder notifications -->
-        <receiver android:name=".ReminderReceiver" android:exported="false" />
-        <receiver android:name=".ReminderBootReceiver" android:exported="false">
+        <!-- Scheduled notifications (templates in data/notifications.json) -->
+        <receiver android:name=".NotifyReceiver" android:exported="false" />
+        <receiver android:name=".NotifyBootReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />

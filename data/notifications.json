@@ -1,0 +1,44 @@
+{
+  "_info": "Keyfe Keder Radyo bildirim şablonları. Bu dosya GitHub'dan okunur; değiştirince uygulama güncellemesi gerekmez. days: 1=Pazartesi ... 7=Pazar. {station} = kullanıcının favori ya da son dinlediği radyo (yoksa o şablon atlanır). {greeting} = saate göre selam. specials: belirli bir tarihte, o günün normal bildirimi yerine gönderilir.",
+  "version": 1,
+  "slots": [
+    { "id": "weekday_morning", "days": [1, 2, 3, 4, 5], "time": "08:30" },
+    { "id": "weekday_evening", "days": [1, 2, 3, 4], "time": "20:30" },
+    { "id": "friday_evening", "days": [5], "time": "19:00" },
+    { "id": "weekend_late_morning", "days": [6, 7], "time": "11:00" },
+    { "id": "weekend_evening", "days": [6, 7], "time": "21:00" }
+  ],
+  "templates": [
+    { "slot": "weekday_morning", "title": "Günaydın!", "body": "Güne müzikle başlamaya ne dersin? {station} seni bekliyor." },
+    { "slot": "weekday_morning", "title": "Kahven hazırsa frekans da hazır", "body": "Sabahın keyfini {station} ile çıkar." },
+    { "slot": "weekday_morning", "title": "Yeni bir gün, yeni bir frekans", "body": "Keyfime Bırak, bugünün radyosunu senin için seçsin." },
+    { "slot": "weekday_morning", "title": "Yola çıkmadan önce", "body": "Kulaklığını tak, {station} canlı yayında." },
+    { "slot": "weekday_morning", "title": "Enerjini yükseltelim", "body": "Hareketli bir sabah için Enerjik modunu dene." },
+
+    { "slot": "weekday_evening", "title": "Akşamın keyfi", "body": "Günün yorgunluğunu {station} ile at." },
+    { "slot": "weekday_evening", "title": "Bir frekans, bin keyif", "body": "Bu akşam ne dinlesek? Keyfime Bırak sana bir radyo seçsin." },
+    { "slot": "weekday_evening", "title": "Kaldığın yerden devam", "body": "{station} şu an canlı yayında." },
+    { "slot": "weekday_evening", "title": "Sakin bir akşam", "body": "Sakin modunda seni dinlendirecek frekanslar var." },
+    { "slot": "weekday_evening", "title": "Bugün nasıl geçti?", "body": "Ruh haline göre bir radyo seç: Sakin, Dertli, Enerjik…" },
+
+    { "slot": "friday_evening", "title": "Cuma akşamı geldi!", "body": "Hafta sonuna müzikle gir. {station} hazır." },
+    { "slot": "friday_evening", "title": "Haftayı kapatıyoruz", "body": "Enerjik moduyla cuma akşamını açalım mı?" },
+    { "slot": "friday_evening", "title": "Hafta bitti, keyif başlıyor", "body": "Keyfime Bırak bu akşamın radyosunu seçsin." },
+
+    { "slot": "weekend_late_morning", "title": "Hafta sonu keyfi", "body": "Kahvaltıya eşlik edecek bir frekans: {station}." },
+    { "slot": "weekend_late_morning", "title": "Acele yok bugün", "body": "Kafamı dinliyorum moduyla sakin bir sabah." },
+    { "slot": "weekend_late_morning", "title": "Günaydın, hafta sonu!", "body": "Daha önce dinlemediğin radyoları Keşfet'te bulabilirsin." },
+
+    { "slot": "weekend_evening", "title": "Pazar akşamı sakinliği", "body": "Haftaya hazırlanırken {station} sana eşlik etsin." },
+    { "slot": "weekend_evening", "title": "Akşam yayını başladı", "body": "Bu akşamın frekansını Keyfime Bırak seçsin." },
+    { "slot": "weekend_evening", "title": "Biraz müzik, biraz keyif", "body": "{station} canlı yayında, bir dokunuş yeter." }
+  ],
+  "comeback": [
+    { "title": "Seni özledik", "body": "Frekanslar seni bekliyor. {station} hâlâ canlı yayında." },
+    { "title": "Bir süredir yoksun", "body": "Bu arada yeni radyolar eklendi. Keşfet'e bir göz at." }
+  ],
+  "specials": [
+    { "date": "2026-10-29", "time": "10:00", "title": "Cumhuriyet Bayramımız kutlu olsun!", "body": "Bugün coşkuyu radyoyla paylaşalım." },
+    { "date": "2026-12-31", "time": "20:00", "title": "Yeni yıla müzikle gir", "body": "Yılbaşı gecesinin frekansı Keyfe Keder'de." }
+  ]
+}

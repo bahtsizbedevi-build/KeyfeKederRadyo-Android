@@ -105,20 +105,22 @@ class MainActivity : AppCompatActivity() {
         })
         handler.postDelayed(taglineRunnable, 3500)
         handler.postDelayed(sleepTicker, 30_000)
-        pendingPlayUrl = intent?.getStringExtra(Reminders.EXTRA_PLAY_URL)
-        Reminders.schedule(this)
+        pendingPlayUrl = intent?.getStringExtra(NotificationCenter.EXTRA_PLAY_URL)
+        NotificationCenter.schedule(this)
+        executor.execute { NotificationCenter.refresh(applicationContext) }
         connectPlayer()
         loadStations()
     }
 
-    /** "X dinle" in a reminder notification. */
+    /** The explicit "Dinle" button of a notification (a plain tap only opens the app). */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.getStringExtra(Reminders.EXTRA_PLAY_URL)?.let { pendingPlayUrl = it; playPending() }
+        intent.getStringExtra(NotificationCenter.EXTRA_PLAY_URL)?.let { pendingPlayUrl = it; playPending() }
     }
 
     override fun onResume() {
         super.onResume()
+        prefs.edit().putLong("last_open", System.currentTimeMillis()).apply()
         // favourites may have changed from the notification heart; devices from Bluetooth settings
         if (::scrollContent.isInitialized && stations.isNotEmpty()) {
             if (page == Page.FAVORITES || page == Page.HOME) showPage(page, keepScroll = true) else if (page == Page.RADIOS || page == Page.LIST) adapter.refresh()
@@ -132,7 +134,7 @@ class MainActivity : AppCompatActivity() {
         if (controller == null || stations.isEmpty()) return
         pendingPlayUrl = null
         autoplayDone = true
-        stations.firstOrNull { it.resolvedUrl == url }?.let { play(it); openFullPlayer() }
+        stations.firstOrNull { it.resolvedUrl == url }?.let { play(it) }
     }
 
     override fun onDestroy() {
@@ -482,19 +484,14 @@ class MainActivity : AppCompatActivity() {
 
         c.addView(ui.sectionHeader("Bildirimler"))
         val notes = settingsCard()
-        Reminders.Slot.entries.forEachIndexed { i, slot ->
-            if (i > 0) notes.addView(divider())
-            val title = if (slot == Reminders.Slot.MORNING) "Sabah hatırlatıcısı" else "Akşam hatırlatıcısı"
-            val icon = if (slot == Reminders.Slot.MORNING) R.drawable.ic_sun else R.drawable.ic_moon
-            notes.addView(settingRow(icon, title, "${slot.label} • favori radyonla kısa bir selam",
-                NeonSwitch(this, Reminders.isEnabled(this, slot)) { on ->
-                    Reminders.setEnabled(this, slot, on)
-                    if (on) ensureNotificationsAllowed()
-                }).apply {
-                    // debug builds only: long-press shows the reminder right away for testing
-                    if (BuildConfig.DEBUG) setOnLongClickListener { executor.execute { Reminders.preview(applicationContext, slot) }; true }
-                })
-        }
+        notes.addView(settingRow(R.drawable.ic_bell, "Bildirimler", "Günde en fazla iki kısa mesaj: sabah ve akşam, özel günlerde sürprizler",
+            NeonSwitch(this, NotificationCenter.isEnabled(this)) { on ->
+                NotificationCenter.setEnabled(this, on)
+                if (on) ensureNotificationsAllowed()
+            }).apply {
+                // debug builds only: long-press shows the next notification right away
+                if (BuildConfig.DEBUG) setOnLongClickListener { executor.execute { NotificationCenter.preview(applicationContext) }; true }
+            })
         c.addView(wrap(notes))
 
         c.addView(ui.sectionHeader("Radyolar"))
@@ -917,7 +914,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Reminders need the notification permission; ask, or send the user to the app's notification settings. */
+    /** Notifications need the permission; ask, or send the user to the app's notification settings. */
     private fun ensureNotificationsAllowed() {
         if (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
         if (!prefs.getBoolean("asked_notifications", false) || shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {

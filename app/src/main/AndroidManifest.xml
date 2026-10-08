@@ -11,8 +11,8 @@
     <application
         android:allowBackup="true"
         android:label="@string/app_name"
-        android:icon="@drawable/keyfe_keder_brand"
-        android:roundIcon="@drawable/keyfe_keder_brand"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.KeyfeKederRadyo"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true">

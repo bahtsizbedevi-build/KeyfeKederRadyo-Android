@@ -11,7 +11,6 @@ import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.Typeface
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.util.BitmapLoader
@@ -76,13 +75,12 @@ object CoverArt {
             val w = logo.width * scale; val h = logo.height * scale
             c.drawBitmap(logo, null, Rect((s / 2 - w / 2).toInt(), (s / 2 - h / 2).toInt(), (s / 2 + w / 2).toInt(), (s / 2 + h / 2).toInt()), p)
         } else {
-            p.color = 0xFFFFFFFF.toInt(); p.textAlign = Paint.Align.CENTER
-            p.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            val initials = StationArtworkView.initialsOf(name)
-            p.textSize = s * (if (initials.length > 1) .3f else .38f)
-            p.setShadowLayer(s * .04f, 0f, s * .01f, 0xAAFF2E88.toInt())
-            c.drawText(initials, s / 2, s / 2 - (p.descent() + p.ascent()) / 2, p)
-            p.clearShadowLayer()
+            // no station logo: the Keyfe Keder logo itself
+            val brand = StationArtworkView.brandLogo(context)
+            val fit = s * .7f
+            val scale = min(fit / brand.width, fit / brand.height)
+            val w = brand.width * scale; val h = brand.height * scale
+            c.drawBitmap(brand, null, Rect((s / 2 - w / 2).toInt(), (s / 2 - h / 2).toInt(), (s / 2 + w / 2).toInt(), (s / 2 + h / 2).toInt()), p)
         }
         return out
     }

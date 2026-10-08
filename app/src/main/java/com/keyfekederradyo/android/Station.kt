@@ -12,5 +12,7 @@ data class Station(
     val homepage: String = "",
     val logoUrl: String = "",
     /** Province name, "Ulusal" for national networks, or empty when unknown. */
-    val city: String = ""
+    val city: String = "",
+    /** Popularity from Radio Browser (higher = more listeners liked it). */
+    val votes: Int = 0
 )

@@ -83,7 +83,8 @@ class StationRepository(private val context: Context) {
                 song = o.optString("song").ifBlank { "Canlı yayın" },
                 homepage = homepage,
                 logoUrl = o.optString("logo").trim().ifBlank { faviconFor(homepage) },
-                city = o.optString("city").trim()
+                city = o.optString("city").trim(),
+                votes = o.optInt("votes", 0)
             )
         }
 

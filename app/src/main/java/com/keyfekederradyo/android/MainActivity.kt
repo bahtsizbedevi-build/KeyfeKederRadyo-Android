@@ -238,7 +238,8 @@ class MainActivity : AppCompatActivity() {
     private fun buildHeader(): View {
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(16), ui.dp(10), ui.dp(12), ui.dp(10)) }
         val logo = ImageView(this).apply {
-            setImageResource(R.drawable.keyfe_keder_brand); scaleType = ImageView.ScaleType.CENTER_CROP
+            setImageResource(R.drawable.keyfe_keder_brand); scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(0xFF120C10.toInt()); setPadding(ui.dp(2), ui.dp(2), ui.dp(2), ui.dp(2))
             outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: android.graphics.Outline) = outline.setRoundRect(0, 0, view.width, view.height, ui.dpf(12f))
             }
@@ -390,7 +391,7 @@ class MainActivity : AppCompatActivity() {
             Page.HOME -> scrollPage(keepScroll) { buildHome() }
             Page.DISCOVER -> scrollPage(keepScroll) { buildDiscover() }
             Page.SETTINGS -> scrollPage(keepScroll) { buildSettings() }
-            Page.RADIOS -> listPage("Tüm radyolar", "${stations.size} canlı yayın", stations, showGenres = true)
+            Page.RADIOS -> listPage("Tüm radyolar", "${stations.size} canlı yayın", stations.sortedByDescending { it.votes }, showGenres = true)
             Page.FAVORITES -> listPage("Favorilerin", "Kalbe dokunduğun radyolar burada", stations.filter { isFavorite(it) }, showGenres = false,
                 empty = "Henüz favorin yok. Bir radyonun kalbine dokun, burada parlasın.")
             Page.LIST -> listPage(listTitle, "${listItems.size} radyo", listItems, showGenres = false)

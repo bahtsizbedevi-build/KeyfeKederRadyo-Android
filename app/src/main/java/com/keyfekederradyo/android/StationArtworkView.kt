@@ -13,30 +13,23 @@ import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.Typeface
 import android.view.View
 import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Station cover: real logo when one loads, otherwise a genre-tinted gradient with the station's initials.
+ * Station cover: the station logo on a genre-tinted plate, or the Keyfe Keder logo when it has none.
  * While playing, the rim glows and pulses.
  */
 class StationArtworkView(context: Context) : View(context) {
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val clip = Path()
     private val rect = RectF()
     private val dst = Rect()
 
-    private var initials = ""
     private var accent = 0xFFFF7A00.toInt()
     private var logo: Bitmap? = null
     private var brand: Bitmap? = null
@@ -46,12 +39,11 @@ class StationArtworkView(context: Context) : View(context) {
 
     init { setLayerType(LAYER_TYPE_SOFTWARE, null) } // BlurMaskFilter needs a software layer
 
+    @Suppress("UNUSED_PARAMETER") // the name is part of the call sites' API; the cover itself is image-only
     fun bind(name: String, genreValue: String, artworkUrl: String = "") {
-        initials = initialsOf(name)
         accent = accentFor(genreValue)
-        if (name == "RADYO" && artworkUrl.isBlank()) {
-            brand = brand ?: BitmapFactory.decodeResource(resources, R.drawable.keyfe_keder_brand)
-        } else brand = null
+        // stations without a logo (and the empty player) show the Keyfe Keder logo
+        brand = brand ?: brandLogo(context)
         if (artworkUrl != boundUrl) {
             boundUrl = artworkUrl
             logo = StationImageLoader.cached(artworkUrl)
@@ -86,8 +78,10 @@ class StationArtworkView(context: Context) : View(context) {
         clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
         canvas.save(); canvas.clipPath(clip)
 
-        val dark = blend(accent, Color.BLACK, .78f)
-        bgPaint.shader = LinearGradient(rect.left, rect.top, rect.right, rect.bottom, blend(accent, Color.BLACK, .35f), dark, Shader.TileMode.CLAMP)
+        // brand logo gets a deep neutral backdrop; station logos a soft genre tint
+        val tint = if (logo != null) accent else 0xFF3A1A0C.toInt()
+        val dark = blend(tint, Color.BLACK, .78f)
+        bgPaint.shader = LinearGradient(rect.left, rect.top, rect.right, rect.bottom, blend(tint, Color.BLACK, .35f), dark, Shader.TileMode.CLAMP)
         canvas.drawRect(rect, bgPaint)
         bgPaint.shader = RadialGradient(rect.left + rect.width() * .25f, rect.top + rect.height() * .2f, rect.width() * .9f,
             0x55FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
@@ -96,7 +90,7 @@ class StationArtworkView(context: Context) : View(context) {
         val art = logo ?: brand
         if (art != null) {
             // Logos sit on a soft light plate so dark and transparent logos stay readable
-            val plate = min(rect.width(), rect.height()) * (if (logo != null) .66f else .92f)
+            val plate = min(rect.width(), rect.height()) * (if (logo != null) .66f else .86f)
             val cx = rect.centerX(); val cy = rect.centerY()
             if (logo != null) {
                 bgPaint.shader = null; bgPaint.color = 0xF2FFFFFF.toInt()
@@ -107,11 +101,6 @@ class StationArtworkView(context: Context) : View(context) {
             val bw = art.width * scale; val bh = art.height * scale
             dst.set((cx - bw / 2).toInt(), (cy - bh / 2).toInt(), (cx + bw / 2).toInt(), (cy + bh / 2).toInt())
             canvas.drawBitmap(art, null, dst, bitmapPaint)
-        } else {
-            textPaint.textSize = min(rect.width(), rect.height()) * (if (initials.length > 1) .34f else .42f)
-            textPaint.setShadowLayer(textPaint.textSize * .18f, 0f, textPaint.textSize * .06f, 0x66000000)
-            val y = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
-            canvas.drawText(initials, rect.centerX(), y, textPaint)
         }
         canvas.restore()
 
@@ -144,11 +133,12 @@ class StationArtworkView(context: Context) : View(context) {
             }
         }
 
-        fun initialsOf(name: String): String {
-            val skip = setOf("radyo", "radio", "fm", "turkey", "türkiye", "turkiye", "the")
-            val words = name.split(Regex("[\\s\\-_.()]+")).filter { it.isNotBlank() && it.lowercase() !in skip }
-            val source = words.ifEmpty { name.split(" ").filter { it.isNotBlank() } }
-            return source.take(2).joinToString("") { it.first().uppercase() }.ifBlank { "K" }
+        @Volatile private var brandCache: Bitmap? = null
+
+        /** The app logo, decoded once at a modest size. */
+        fun brandLogo(context: Context): Bitmap = brandCache ?: synchronized(this) {
+            brandCache ?: BitmapFactory.decodeResource(context.resources, R.drawable.keyfe_keder_brand,
+                BitmapFactory.Options().apply { inSampleSize = 2 }).also { brandCache = it }
         }
 
         private fun blend(a: Int, b: Int, t: Float): Int = Color.rgb(

@@ -89,6 +89,7 @@ jobs:
           PLAY_KEYSTORE_BASE64: ${{ secrets.PLAY_KEYSTORE_BASE64 }}
           PLAY_KEYSTORE_PASSWORD: ${{ secrets.PLAY_KEYSTORE_PASSWORD }}
           PLAY_KEY_ALIAS: ${{ secrets.PLAY_KEY_ALIAS }}
+          PLAY_KEY_PASSWORD: ${{ secrets.PLAY_KEY_PASSWORD }}
         run: |
           KS="$RUNNER_TEMP/play-release.keystore"
           # Accept plain base64, wrapped lines, CRLF, or certutil -encode output (BEGIN/END header lines)
@@ -112,6 +113,19 @@ jobs:
             keytool -list -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD | grep -iE 'PrivateKeyEntry' | cut -d, -f1
             exit 1
           fi
+          # Key password check (PKCS12 keystores require key password == store password)
+          case "$MAGIC" in
+            30*)
+              if [ "$PLAY_KEY_PASSWORD" != "$PLAY_KEYSTORE_PASSWORD" ]; then
+                echo "::error::This is a PKCS12 keystore: PLAY_KEY_PASSWORD must be the same as PLAY_KEYSTORE_PASSWORD, but they differ."
+                exit 1
+              fi ;;
+            *)
+              if ! keytool -certreq -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD -alias "$PLAY_KEY_ALIAS" -keypass:env PLAY_KEY_PASSWORD -file /dev/null > /dev/null 2>&1; then
+                echo "::error::PLAY_KEY_PASSWORD is wrong for the key in this keystore."
+                exit 1
+              fi ;;
+          esac
           echo "Upload key certificate (public info - compare with Play Console > App integrity > Upload key certificate):"
           keytool -list -v -keystore "$KS" -storepass:env PLAY_KEYSTORE_PASSWORD -alias "$PLAY_KEY_ALIAS" \
             | grep -E 'Owner:|SHA1:|SHA256:|Valid from' || true
@@ -122,7 +136,15 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.PLAY_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.PLAY_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.PLAY_KEY_PASSWORD }}
-        run: gradle bundleRelease --no-daemon
+        run: |
+          set -o pipefail
+          if ! gradle bundleRelease --no-daemon 2>&1 | tee "$RUNNER_TEMP/gradle.log"; then
+            # Surface the real Gradle error in the run summary
+            grep -A 12 -E 'What went wrong|^e: |Lint found' "$RUNNER_TEMP/gradle.log" | head -40 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
 
       - name: Verify AAB (signature, id, version, size)
         env:

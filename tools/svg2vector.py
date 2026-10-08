@@ -34,6 +34,9 @@ ICONS = {
     "ic_bluetooth": ("bold", "bluetooth"), "ic_speaker": ("fill", "speaker-high"),
     "ic_devices": ("regular", "devices"), "ic_usb": ("bold", "usb"), "ic_bell": ("regular", "bell-ringing"),
     "ic_sun": ("fill", "sun-horizon"), "ic_television": ("regular", "television"), "ic_gear_small": ("regular", "gear"),
+    "ic_user": ("regular", "user-circle"), "ic_user_fill": ("fill", "user-circle"), "ic_trophy": ("fill", "trophy"),
+    "ic_fire": ("fill", "fire"), "ic_clock": ("fill", "clock"), "ic_pencil": ("regular", "pencil-simple"),
+    "ic_calendar": ("fill", "calendar-check"), "ic_crown": ("fill", "crown-simple"),
 }
 
 TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>

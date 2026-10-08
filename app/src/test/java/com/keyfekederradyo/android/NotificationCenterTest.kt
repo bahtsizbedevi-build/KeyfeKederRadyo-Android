@@ -76,4 +76,14 @@ class NotificationCenterTest {
         }
         assertTrue("surprise should fire on some days, fired $fired", fired in 3..25)
     }
+
+    @Test
+    fun name_templates_only_when_a_name_is_known() {
+        repeat(40) { seed ->
+            val (t, b) = NotificationCenter.compose(config, "weekday_morning", "Kral FM", 0, null, 8, Random(seed))!!
+            assertFalse("{name}" in t + b)
+        }
+        val named = (0 until 60).mapNotNull { NotificationCenter.compose(config, "weekday_morning", "Kral FM", 0, null, 8, Random(it), "Ayşe") }
+        assertTrue(named.any { "Ayşe" in it.first })
+    }
 }

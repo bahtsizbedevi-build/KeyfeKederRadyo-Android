@@ -153,16 +153,17 @@ object NotificationCenter {
     // ---------------------------------------------------------------- content
 
     /** Picks the message for [id], fills {station}/{greeting}; never the same title twice in a row. */
-    fun compose(config: Config, id: String, station: String?, daysAway: Long, lastTitle: String?, hour: Int, random: Random = Random.Default): Pair<String, String>? {
+    fun compose(config: Config, id: String, station: String?, daysAway: Long, lastTitle: String?, hour: Int,
+                random: Random = Random.Default, name: String? = null): Pair<String, String>? {
         val special = if (id.startsWith("special:")) config.specials.firstOrNull { it.date == id.removePrefix("special:") } else null
         val pool = when {
             special != null -> listOf(Template(id, special.title, special.body))
             daysAway >= 3 && hour >= 17 && config.comeback.isNotEmpty() -> config.comeback
             else -> config.templates.filter { it.slot == id }
-        }.filter { station != null || "{station}" !in it.title + it.body }
+        }.filter { (station != null || "{station}" !in it.title + it.body) && (!name.isNullOrBlank() || "{name}" !in it.title + it.body) }
         val choice = pool.filter { it.title != lastTitle }.ifEmpty { pool }.randomOrNull(random) ?: return null
         val greeting = when (hour) { in 5..11 -> "Günaydın"; in 12..17 -> "İyi günler"; in 18..22 -> "İyi akşamlar"; else -> "İyi geceler" }
-        fun fill(s: String) = s.replace("{station}", station.orEmpty()).replace("{greeting}", greeting)
+        fun fill(s: String) = s.replace("{station}", station.orEmpty()).replace("{greeting}", greeting).replace("{name}", name.orEmpty())
         return fill(choice.title) to fill(choice.body)
     }
 
@@ -181,7 +182,8 @@ object NotificationCenter {
         val daysAway = (System.currentTimeMillis() - p.getLong("last_open", System.currentTimeMillis())) / 86_400_000L
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         val config = runCatching { load(context) }.getOrNull() ?: return
-        val (title, body) = compose(config, id, station?.name, daysAway, p.getString("notify_last", null), hour) ?: return
+        val (title, body) = compose(config, id, station?.name, daysAway, p.getString("notify_last", null), hour,
+            name = p.getString("user_name", null)) ?: return
         p.edit().putString("notify_last", title).apply()
 
         val manager = context.getSystemService(NotificationManager::class.java)

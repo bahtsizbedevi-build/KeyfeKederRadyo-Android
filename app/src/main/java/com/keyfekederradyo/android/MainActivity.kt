@@ -54,7 +54,7 @@ class MainActivity : AppCompatActivity() {
     private var playerError = false
     private var autoplayDone = false
 
-    private enum class Page { HOME, RADIOS, DISCOVER, FAVORITES, SETTINGS, LIST }
+    private enum class Page { HOME, RADIOS, DISCOVER, FAVORITES, SETTINGS, LIST, PROFILE }
     private var page = Page.HOME
     private var listTitle = ""
     private var listItems = emptyList<Station>()
@@ -90,6 +90,8 @@ class MainActivity : AppCompatActivity() {
     private var pendingPlayUrl: String? = null
     private var pendingShortcut: String? = null
     private var suggestSheet: SuggestSheet? = null
+    private var onboarding: OnboardingView? = null
+    private var profile = Profile("", emptySet(), "")
     private var systemBars = intArrayOf(0, 0, 0, 0)
 
     private val taglines = listOf("Bir frekans, bin keyif.", "Biraz müzik, biraz keyif.", "Keyfin ne isterse, frekans orada.", "Kafana göre bir radyo bulalım.")
@@ -109,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(sleepTicker, 30_000)
         pendingPlayUrl = intent?.getStringExtra(NotificationCenter.EXTRA_PLAY_URL)
         pendingShortcut = intent?.action?.takeIf { it == ACTION_PICK || it == ACTION_FAVORITES }
-        askNotificationsOnFirstLaunch()
+        profile = Profile.load(this)
         NotificationCenter.schedule(this)
         executor.execute { NotificationCenter.refresh(applicationContext) }
         connectPlayer()
@@ -127,6 +129,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         prefs.edit().putLong("last_open", System.currentTimeMillis()).apply()
         // favourites may have changed from the notification heart; devices from Bluetooth settings
+        handler.postDelayed({ checkBadges() }, 800)
         if (::scrollContent.isInitialized && stations.isNotEmpty()) {
             if (page == Page.FAVORITES || page == Page.HOME) showPage(page, keepScroll = true) else if (page == Page.RADIOS || page == Page.LIST) adapter.refresh()
             refreshPlayerUi()
@@ -168,6 +171,7 @@ class MainActivity : AppCompatActivity() {
     private val sleepTicker = object : Runnable {
         override fun run() {
             if (prefs.getLong("sleep_until", 0L) > 0L) { refreshPlayerUi(); if (page == Page.SETTINGS) showPage(Page.SETTINGS, keepScroll = true) }
+            checkBadges()
             handler.postDelayed(this, 30_000)
         }
     }
@@ -251,6 +255,7 @@ class MainActivity : AppCompatActivity() {
         tagline = ui.text(taglines[0], 12f, Neon.ORANGE)
         texts.addView(tagline)
         row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(ui.iconButton(R.drawable.ic_user, "Profilin", 44, 22) { showPage(Page.PROFILE) }.apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = ui.dp(8) })
         row.addView(ui.iconButton(R.drawable.ic_search, "Ara", 44, 21) { toggleSearch() }.apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = ui.dp(8) })
         row.addView(ui.iconButton(R.drawable.ic_settings, "Ayarlar", 44, 21) { showPage(Page.SETTINGS) })
         return row
@@ -358,7 +363,7 @@ class MainActivity : AppCompatActivity() {
         return bar
     }
 
-    private fun navIndex() = when (page) { Page.HOME -> 0; Page.RADIOS, Page.LIST -> 1; Page.DISCOVER -> 2; Page.FAVORITES -> 3; Page.SETTINGS -> -1 }
+    private fun navIndex() = when (page) { Page.HOME -> 0; Page.RADIOS, Page.LIST -> 1; Page.DISCOVER -> 2; Page.FAVORITES -> 3; Page.SETTINGS, Page.PROFILE -> -1 }
 
     private fun highlightNav(animate: Boolean = true) {
         if (!::navIndicator.isInitialized) return
@@ -391,6 +396,7 @@ class MainActivity : AppCompatActivity() {
             Page.HOME -> scrollPage(keepScroll) { buildHome() }
             Page.DISCOVER -> scrollPage(keepScroll) { buildDiscover() }
             Page.SETTINGS -> scrollPage(keepScroll) { buildSettings() }
+            Page.PROFILE -> scrollPage(keepScroll) { buildProfile() }
             Page.RADIOS -> listPage("Tüm radyolar", "${stations.size} canlı yayın", stations.sortedByDescending { it.votes }, showGenres = true)
             Page.FAVORITES -> listPage("Favorilerin", "Kalbe dokunduğun radyolar burada", stations.filter { isFavorite(it) }, showGenres = false,
                 empty = "Henüz favorin yok. Bir radyonun kalbine dokun, burada parlasın.")
@@ -428,12 +434,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildHome() {
         val c = scrollContent
-        c.addView(ui.label(greeting()).apply { setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0) })
+        c.addView(ui.label(if (profile.name.isNotBlank()) "${greeting()}, ${profile.name}" else greeting()).apply { setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0) })
         c.addView(ui.text("Bugün hangi frekanstasın?", 28f, Neon.TEXT, true, lines = 2).apply { setPadding(ui.dp(20), ui.dp(6), ui.dp(20), 0) })
         c.addView(heroPickCard(), LinearLayout.LayoutParams(-1, ui.dp(112)).apply { setMargins(ui.dp(16), ui.dp(18), ui.dp(16), ui.dp(4)) })
 
+        dailyStation()?.let { c.addView(dailyCard(it), LinearLayout.LayoutParams(-1, -2).apply { setMargins(ui.dp(16), ui.dp(14), ui.dp(16), 0) }) }
+
         c.addView(ui.sectionHeader("Hemen bir mod seç"))
         c.addView(ui.chipRow(moodChips()))
+
+        val forYou = forYouStations()
+        if (forYou.isNotEmpty()) {
+            c.addView(ui.sectionHeader("Senin için", "Düzenle") { showOnboarding() })
+            c.addView(cardRow(forYou))
+        }
 
         val recent = historyStations()
         c.addView(ui.sectionHeader("Son dinlediklerin"))
@@ -710,7 +724,7 @@ class MainActivity : AppCompatActivity() {
         if (pickSheet != null) return
         pickSheet = PickSheetView(this, { stations }, { mood, exclude ->
             StationPicker.pick(stations, favorites(), recentUrls(), brokenUrls(), Calendar.getInstance().get(Calendar.HOUR_OF_DAY), mood, exclude)
-        }, { play(it) }, { pickSheet = null }).also { padForBars(it); it.show(root) }
+        }, { prefs.edit().putInt("pick_count", prefs.getInt("pick_count", 0) + 1).apply(); play(it) }, { pickSheet = null }).also { padForBars(it); it.show(root) }
     }
 
     private fun openFullPlayer() {
@@ -740,6 +754,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun goBack() {
         when {
+            onboarding != null -> Unit
             suggestSheet != null -> suggestSheet?.close()
             outputSheet != null -> outputSheet?.close()
             pickSheet != null -> pickSheet?.close()
@@ -929,6 +944,7 @@ class MainActivity : AppCompatActivity() {
         stations = loaded
         if (page == Page.LIST && search.text.isNotBlank()) searchFor(search.text.toString()) else showPage(page, keepScroll = page == Page.SETTINGS)
         refreshPlayerUi()
+        if (!Profile.onboarded(this) && onboarding == null) showOnboarding()
         playPending()
         maybeAutoplay()
     }
@@ -967,6 +983,7 @@ class MainActivity : AppCompatActivity() {
     private fun setFavorite(station: Station, on: Boolean, fromList: Boolean) {
         prefs.edit().putBoolean(station.resolvedUrl, on).apply()
         refreshPlayerUi(animateFavorite = !fromList)
+        handler.postDelayed({ checkBadges() }, 900)
         if (page == Page.FAVORITES || page == Page.HOME) handler.postDelayed({ if (!isFinishing) showPage(page, keepScroll = true) }, 650)
     }
 
@@ -980,11 +997,192 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** First launch: notifications start switched on, so ask for the Android 13+ permission right away. */
-    private fun askNotificationsOnFirstLaunch() {
-        if (prefs.getBoolean("first_launch_done", false)) return
-        prefs.edit().putBoolean("first_launch_done", true).apply()
-        if (NotificationCenter.isEnabled(this)) handler.postDelayed({ ensureNotificationsAllowed() }, 1200)
+    // ---------------------------------------------------------------- personal touches
+
+    /** First-launch welcome (also "Tercihlerini düzenle"). Notifications start on, so the permission is asked right after. */
+    private fun showOnboarding() {
+        if (onboarding != null) return
+        val firstTime = !Profile.onboarded(this)
+        val genres = stations.groupingBy { it.genre.ifBlank { "Radyo" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key }.filter { it != "Karışık" }
+        val cities = stations.filter { it.city.isNotBlank() && it.city != "Ulusal" }.groupingBy { it.city }.eachCount()
+            .entries.sortedByDescending { it.value }.map { it.key }
+        onboarding = OnboardingView(this, genres, cities, Profile.load(this)) { p ->
+            onboarding = null
+            Profile.save(this, p); profile = p
+            showPage(Page.HOME)
+            if (firstTime && NotificationCenter.isEnabled(this)) handler.postDelayed({ ensureNotificationsAllowed() }, 700)
+        }.also { padForBars(it); root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
+    }
+
+    private fun forYouStations(): List<Station> {
+        if (profile.genres.isEmpty() && profile.city.isBlank()) return emptyList()
+        return stations.filter { it.genre in profile.genres || (profile.city.isNotBlank() && it.city == profile.city) }
+            .sortedWith(compareByDescending<Station> { it.city == profile.city }.thenByDescending { it.logoUrl.isNotBlank() }.thenByDescending { it.votes })
+            .take(12)
+    }
+
+    private val dailyNotes = listOf(
+        "Bugün bunu dinlemeden geçme.", "Kahvenin yanına çok yakışır.", "Yolda, evde, işte: bugünün eşlikçisi.",
+        "Bugün biraz farklı bir şey deneyelim mi?", "Bu frekansta güzel sürprizler var.", "Günün ritmini bu radyo tutsun.",
+        "Bir dokunuşla güne renk kat.", "Herkes bugün bunu dinliyor olabilir.", "Moduna iyi gelecek bir yayın.",
+        "Bugünün sürprizi bu frekansta.", "Biraz müzik, biraz keyif: işte bugünün radyosu.", "Sana özel değil ama sana göre.",
+        "Bugünün şarkıları bu radyoda bir başka.", "Günün en güzel anlarına eşlik etsin.")
+
+    /** The same "Günün frekansı" for everyone on a given day: a popular station with a logo. */
+    private fun dailyStation(): Station? {
+        val pool = stations.filter { it.logoUrl.isNotBlank() }.sortedByDescending { it.votes }.take(150).ifEmpty { stations }
+        if (pool.isEmpty()) return null
+        val key = ListeningStats.dateKey().hashCode()
+        return pool[kotlin.random.Random(key).nextInt(pool.size)]
+    }
+
+    private fun dailyCard(st: Station): View {
+        val card = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14)); isClickable = true
+            background = ui.glass(26f, gradient = intArrayOf(0x2EFFFFFF, 0x1AFF7A1A, 0x14FF2E88))
+            setOnClickListener { Ui.pop(this); play(st) }
+        }
+        card.addView(StationArtworkView(this).apply { bind(st.name, st.genre, st.logoUrl) }, LinearLayout.LayoutParams(ui.dp(84), ui.dp(84)).apply { rightMargin = ui.dp(14) })
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(ui.label("Günün frekansı"))
+        texts.addView(ui.text(st.name, 18f, Neon.TEXT, true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+        texts.addView(ui.text(dailyNotes[java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR) % dailyNotes.size], 13f, Neon.MUTED, lines = 2),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(3) })
+        card.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(FrameLayout(this).apply {
+            background = GlassDrawable(this@MainActivity, 24f, Neon.ORANGE, 0x55FFFFFF, 0, Neon.BRAND)
+            addView(ui.icon(R.drawable.ic_play, Neon.TEXT, 20), FrameLayout.LayoutParams(ui.dp(20), ui.dp(20), Gravity.CENTER))
+        }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)).apply { leftMargin = ui.dp(10) })
+        return card
+    }
+
+    private fun buildProfile() {
+        val c = scrollContent
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(20), ui.dp(8), ui.dp(12), 0) }
+        head.addView(ui.text(if (profile.name.isNotBlank()) "Merhaba, ${profile.name}" else "Profilin", 28f, Neon.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(ui.iconButton(R.drawable.ic_pencil, "Tercihlerini düzenle", 44, 20) { showOnboarding() })
+        c.addView(head)
+        c.addView(ui.text("Senin Keyfe Keder'in: dinleme alışkanlıkların ve rozetlerin. Hepsi yalnızca bu cihazda.", 13.5f, Neon.MUTED, lines = 2).apply { setPadding(ui.dp(20), ui.dp(6), ui.dp(20), 0) })
+
+        val days = ListeningStats.days(this)
+        val week = ListeningStats.week(days)
+        val streak = ListeningStats.streak(days)
+        c.addView(ui.sectionHeader("Bu hafta", if (week.seconds > 0) "Paylaş" else null) { shareWeek(week, streak) })
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(ui.dp(20), ui.dp(18), ui.dp(20), ui.dp(18))
+            background = ui.glass(26f, Neon.withAlpha(Neon.ORANGE, 90), gradient = intArrayOf(0x59FF7A1A, 0x40FF2E88, 0x1A8B5CFF))
+        }
+        card.addView(ui.text(if (week.seconds > 0) ListeningStats.formatDuration(week.seconds) else "Henüz dinlemedin", 32f, Neon.TEXT, true))
+        card.addView(ui.text(if (week.seconds > 0) "son 7 günde dinledin" else "Bir radyo aç, özetin burada dolsun.", 13.5f, 0xFFFFE2CC.toInt()))
+        card.addView(ui.text(week.persona, 13.5f, Neon.TEXT, true).apply {
+            setPadding(ui.dp(14), ui.dp(7), ui.dp(14), ui.dp(7)); background = ui.glass(16f, fill = 0x33000000)
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(14) })
+        val numbers = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        fun stat(icon: Int, value: String, label: String) = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(ui.icon(icon, Neon.TEXT, 20))
+            addView(ui.text(value, 20f, Neon.TEXT, true), LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(6) })
+            addView(ui.text(label, 11.5f, 0xCCFFFFFF.toInt()))
+        }
+        numbers.addView(stat(R.drawable.ic_calendar, "${week.activeDays}/7", "aktif gün"), LinearLayout.LayoutParams(0, -2, 1f))
+        numbers.addView(stat(R.drawable.ic_fire, "$streak", "günlük seri"), LinearLayout.LayoutParams(0, -2, 1f))
+        numbers.addView(stat(R.drawable.ic_radio_fill, "${week.stationCount}", "farklı radyo"), LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(numbers, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(18) })
+        val top = stations.firstOrNull { it.resolvedUrl == week.topStationUrl }
+        if (top != null) {
+            val row = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10)); isClickable = true
+                background = ui.glass(18f, fill = 0x33000000)
+                setOnClickListener { Ui.pop(this); play(top) }
+            }
+            row.addView(StationArtworkView(this).apply { bind(top.name, top.genre, top.logoUrl) }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)).apply { rightMargin = ui.dp(12) })
+            val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            t.addView(ui.label("En çok dinlediğin", 0xCCFFFFFF.toInt()))
+            t.addView(ui.text(top.name, 16f, Neon.TEXT, true))
+            week.topGenre?.let { t.addView(ui.text("En sevdiğin tür: $it", 12f, 0xCCFFFFFF.toInt())) }
+            row.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(ui.icon(R.drawable.ic_crown, Neon.TEXT, 22))
+            card.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(16) })
+        }
+        c.addView(wrap(card))
+
+        val progress = Badges.progress(this)
+        c.addView(ui.sectionHeader("Rozetlerin  ${progress.count { it.unlocked }}/${progress.size}"))
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(12), 0, ui.dp(12), 0) }
+        progress.chunked(2).forEach { pair ->
+            val row = LinearLayout(this)
+            pair.forEach { row.addView(badgeTile(it), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4)) }) }
+            if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            grid.addView(row)
+        }
+        c.addView(grid)
+    }
+
+    private fun badgeTile(p: Badges.Progress): View {
+        val tile = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
+            background = if (p.unlocked) ui.glass(22f, gradient = intArrayOf(0x40FF7A1A, 0x26FF2E88)) else ui.glass(22f)
+            alpha = if (p.unlocked) 1f else .62f
+        }
+        tile.addView(FrameLayout(this).apply {
+            background = if (p.unlocked) GlassDrawable(this@MainActivity, 22f, Neon.ORANGE, 0x55FFFFFF, 0, Neon.BRAND) else ui.glass(22f)
+            addView(ui.icon(p.badge.icon, if (p.unlocked) Neon.TEXT else Neon.MUTED, 22), FrameLayout.LayoutParams(ui.dp(22), ui.dp(22), Gravity.CENTER))
+        }, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)).apply { bottomMargin = ui.dp(10) })
+        tile.addView(ui.text(p.badge.title, 15f, Neon.TEXT, true))
+        tile.addView(ui.text(p.badge.description, 12f, Neon.MUTED, lines = 2), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(2) })
+        if (!p.unlocked) {
+            val bar = FrameLayout(this).apply { background = ui.glass(3f, fill = 0x22FFFFFF) }
+            val fill = View(this).apply { background = GlassDrawable(this@MainActivity, 3f, Neon.ORANGE, 0, 0, Neon.BRAND) }
+            bar.addView(fill, FrameLayout.LayoutParams(0, -1))
+            bar.post { fill.layoutParams = fill.layoutParams.apply { width = (bar.width * p.current / p.target.coerceAtLeast(1)).toInt() }; fill.requestLayout() }
+            tile.addView(bar, LinearLayout.LayoutParams(-1, ui.dp(6)).apply { topMargin = ui.dp(10) })
+            tile.addView(ui.text("${p.current}/${p.target}", 11f, Neon.MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+        }
+        return tile
+    }
+
+    private fun shareWeek(week: ListeningStats.Week, streak: Int) {
+        val top = stations.firstOrNull { it.resolvedUrl == week.topStationUrl }?.name
+        val text = buildString {
+            append("Bu hafta Keyfe Keder Radyo'da ${ListeningStats.formatDuration(week.seconds)} dinledim. ")
+            append("Dinleyici tipim: ${week.persona}. ")
+            top?.let { append("En çok $it dinledim. ") }
+            if (streak > 1) append("$streak gündür kesintisiz dinliyorum.")
+        }
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Paylaş"))
+    }
+
+    /** Celebrates every badge earned since the last check, one after another. */
+    private fun checkBadges() {
+        if (isFinishing || isDestroyed || onboarding != null) return
+        val fresh = Badges.newlyUnlocked(this)
+        fresh.forEachIndexed { i, badge -> handler.postDelayed({ celebrate(badge) }, i * 3600L) }
+        if (fresh.isNotEmpty() && page == Page.PROFILE) showPage(Page.PROFILE, keepScroll = true)
+    }
+
+    private fun celebrate(badge: Badges.Badge) {
+        if (isFinishing || isDestroyed) return
+        val card = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(14), ui.dp(12), ui.dp(16), ui.dp(12)); isClickable = true
+            background = GlassDrawable(this@MainActivity, 24f, 0xF2161019.toInt(), 0x88FF7A1A.toInt(), Neon.withAlpha(Neon.ORANGE, 120))
+            elevation = ui.dpf(16f)
+            setOnClickListener { showPage(Page.PROFILE) }
+        }
+        card.addView(FrameLayout(this).apply {
+            background = GlassDrawable(this@MainActivity, 22f, Neon.ORANGE, 0x55FFFFFF, 0, Neon.BRAND)
+            addView(ui.icon(badge.icon, Neon.TEXT, 22), FrameLayout.LayoutParams(ui.dp(22), ui.dp(22), Gravity.CENTER))
+        }, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)).apply { rightMargin = ui.dp(12) })
+        val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        t.addView(ui.label("Yeni rozet!"))
+        t.addView(ui.text(badge.title, 16f, Neon.TEXT, true))
+        t.addView(ui.text(badge.description, 12f, Neon.MUTED))
+        card.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(ui.icon(R.drawable.ic_trophy, Neon.ORANGE, 24))
+        root.addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { setMargins(ui.dp(14), systemBars[1] + ui.dp(10), ui.dp(14), 0) })
+        card.translationY = -ui.dpf(160f)
+        card.animate().translationY(0f).setDuration(420).setInterpolator(OvershootInterpolator(1.2f)).withEndAction {
+            card.postDelayed({ card.animate().translationY(-ui.dpf(160f)).alpha(0f).setDuration(320).withEndAction { root.removeView(card) }.start() }, 2800)
+        }.start()
     }
 
     /** Notifications need the permission; ask, or send the user to the app's notification settings. */

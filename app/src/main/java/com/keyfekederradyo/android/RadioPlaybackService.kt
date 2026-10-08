@@ -109,6 +109,22 @@ class RadioPlaybackService : MediaLibraryService() {
         handler.post(timerRunnable)
     }
 
+    // ---- listening diary: time per station, flushed on stop/switch and every minute ----
+    private var segmentStation: Station? = null
+    private var segmentStart = 0L
+    private val statsTick = object : Runnable {
+        override fun run() { flushListening(restart = true); handler.postDelayed(this, 60_000L) }
+    }
+
+    private fun flushListening(restart: Boolean) {
+        val st = segmentStation
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (st != null && segmentStart > 0) ListeningStats.add(this, st, (now - segmentStart) / 1000)
+        if (restart && player.isPlaying) {
+            segmentStation = player.currentMediaItem?.mediaId?.let { byUrl[it] }; segmentStart = now
+        } else { segmentStation = null; segmentStart = 0 }
+    }
+
     private var widgetLogoUrl = ""
     private var widgetLogo: android.graphics.Bitmap? = null
 
@@ -140,6 +156,11 @@ class RadioPlaybackService : MediaLibraryService() {
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) refreshFavoriteButton()
+            if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                flushListening(restart = true)
+                handler.removeCallbacks(statsTick)
+                if (player.isPlaying) handler.postDelayed(statsTick, 60_000L)
+            }
             if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION,
                     Player.EVENT_MEDIA_METADATA_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED)) updateWidget()
         }
@@ -217,6 +238,7 @@ class RadioPlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        if (::player.isInitialized) flushListening(restart = false)
         prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         handler.removeCallbacksAndMessages(null)
         PlaybackState.setPlaying(null)

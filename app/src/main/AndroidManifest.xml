@@ -63,9 +63,8 @@
             </intent-filter>
         </receiver>
 
-        <!-- Android Auto: this app is a media (radio) app -->
-        <meta-data
-            android:name="com.google.android.gms.car.application"
-            android:resource="@xml/automotive_app_desc" />
+        <!-- Android Auto is switched off for the first Play release (needs its own review/testing).
+             To enable later, add back:
+             <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc" /> -->
     </application>
 </manifest>

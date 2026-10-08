@@ -94,7 +94,18 @@ class MainActivity : AppCompatActivity() {
     private var profile = Profile("", emptySet(), "")
     private var systemBars = intArrayOf(0, 0, 0, 0)
 
-    private val taglines = listOf("Bir frekans, bin keyif.", "Biraz müzik, biraz keyif.", "Keyfin ne isterse, frekans orada.", "Kafana göre bir radyo bulalım.")
+    /** Rotating one-liners under the header, shown in random order. */
+    private val taglines = listOf(
+        "Bir frekans, bin keyif.", "Biraz müzik, biraz keyif.", "Keyfin ne isterse, frekans orada.",
+        "Kafana göre bir radyo bulalım.", "Bugün de müzikle iyileşiyoruz.", "Her şarkı bir hatıra taşır.",
+        "Sesini aç, dünyayı biraz kıs.", "Yolun uzunsa şarkın da uzun olsun.", "Dert de keyif de bu frekansta.",
+        "Kahve sıcak, radyo açık, gün güzel.", "Bir şarkı bazen bin söze bedel.", "Moduna göre değil, keyfine göre.",
+        "Sessizlik güzel ama bu şarkı daha güzel.", "Müzik, ruhun pencere açması.", "Bugünün şarkısı seni bekliyor.",
+        "Gülümse, yayındasın.", "Her frekansta yeni bir hikâye.", "Kulağın bizde, keyfin sende.",
+        "Akşam serinliği, radyo sesi, bir de sen.", "Dertliysen arabesk, coşkuluysan pop.", "Memleket kokan türküler bir dokunuş uzakta.",
+        "Şarkılar değişir, keyif kalır.", "Bir nefes müzik, bir yudum çay.", "Sabahın ilk şarkısı günü belirler.",
+        "Hayat kısa, şarkı uzun olsun.", "Frekansını bul, gerisini bize bırak.", "Kalabalıkta kendi şarkını dinle.",
+        "Radyo açık, kapılar açık, gönül açık.", "Ne dinlediğini söyle, keyfini söyleyelim.", "Keyfe keder, gönle sefer.")
     private var taglineIndex = 0
 
     // ---------------------------------------------------------------- lifecycle
@@ -159,7 +170,7 @@ class MainActivity : AppCompatActivity() {
     private val taglineRunnable = object : Runnable {
         override fun run() {
             tagline.animate().alpha(0f).setDuration(200).withEndAction {
-                taglineIndex = (taglineIndex + 1) % taglines.size
+                taglineIndex = (taglineIndex + 1 + kotlin.random.Random.nextInt(taglines.size - 1)) % taglines.size
                 tagline.text = taglines[taglineIndex]
                 tagline.animate().alpha(1f).setDuration(300).start()
             }.start()
@@ -239,8 +250,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun padForBars(view: View) = view.setPadding(systemBars[0], systemBars[1], systemBars[2], systemBars[3])
 
+    /** Logo, name and the three header buttons; the rotating line gets its own full-width row below. */
     private fun buildHeader(): View {
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(16), ui.dp(10), ui.dp(12), ui.dp(10)) }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, ui.dp(6)) }
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(ui.dp(16), ui.dp(10), ui.dp(12), ui.dp(4)) }
         val logo = ImageView(this).apply {
             setImageResource(R.drawable.keyfe_keder_brand); scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(0xFF120C10.toInt()); setPadding(ui.dp(2), ui.dp(2), ui.dp(2), ui.dp(2))
@@ -250,15 +263,15 @@ class MainActivity : AppCompatActivity() {
             clipToOutline = true
         }
         row.addView(logo, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)).apply { rightMargin = ui.dp(12) })
-        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        texts.addView(ui.text("Keyfe Keder", 18f, Neon.TEXT, true).apply { letterSpacing = .02f })
-        tagline = ui.text(taglines[0], 12f, Neon.ORANGE)
-        texts.addView(tagline)
-        row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(ui.text("Keyfe Keder", 19f, Neon.TEXT, true).apply { letterSpacing = .02f }, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(ui.iconButton(R.drawable.ic_user, "Profilin", 44, 22) { showPage(Page.PROFILE) }.apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = ui.dp(8) })
         row.addView(ui.iconButton(R.drawable.ic_search, "Ara", 44, 21) { toggleSearch() }.apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = ui.dp(8) })
         row.addView(ui.iconButton(R.drawable.ic_settings, "Ayarlar", 44, 21) { showPage(Page.SETTINGS) })
-        return row
+        header.addView(row)
+        taglineIndex = kotlin.random.Random.nextInt(taglines.size)
+        tagline = ui.text(taglines[taglineIndex], 13f, Neon.ORANGE).apply { setPadding(ui.dp(20), 0, ui.dp(20), 0) }
+        header.addView(tagline, LinearLayout.LayoutParams(-1, -2))
+        return header
     }
 
     /**
@@ -397,7 +410,7 @@ class MainActivity : AppCompatActivity() {
             Page.DISCOVER -> scrollPage(keepScroll) { buildDiscover() }
             Page.SETTINGS -> scrollPage(keepScroll) { buildSettings() }
             Page.PROFILE -> scrollPage(keepScroll) { buildProfile() }
-            Page.RADIOS -> listPage("Tüm radyolar", "${stations.size} canlı yayın", stations.sortedByDescending { it.votes }, showGenres = true)
+            Page.RADIOS -> listPage("Tüm radyolar", "${stations.size} canlı yayın", stations.sortedWith(compareByDescending<Station> { it.country.startsWith("Türk") }.thenByDescending { it.votes }), showGenres = true)
             Page.FAVORITES -> listPage("Favorilerin", "Kalbe dokunduğun radyolar burada", stations.filter { isFavorite(it) }, showGenres = false,
                 empty = "Henüz favorin yok. Bir radyonun kalbine dokun, burada parlasın.")
             Page.LIST -> listPage(listTitle, "${listItems.size} radyo", listItems, showGenres = false)
@@ -434,7 +447,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildHome() {
         val c = scrollContent
-        c.addView(ui.label(if (profile.name.isNotBlank()) "${greeting()}, ${profile.name}" else greeting()).apply { setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0) })
+        c.addView(ui.label(if (profile.name.isNotBlank()) "${greeting()}, ${profile.name}" else greeting()).apply { setPadding(ui.dp(20), ui.dp(16), ui.dp(20), 0) })
         c.addView(ui.text("Bugün hangi frekanstasın?", 28f, Neon.TEXT, true, lines = 2).apply { setPadding(ui.dp(20), ui.dp(6), ui.dp(20), 0) })
         c.addView(heroPickCard(), LinearLayout.LayoutParams(-1, ui.dp(112)).apply { setMargins(ui.dp(16), ui.dp(18), ui.dp(16), ui.dp(4)) })
 
@@ -1028,12 +1041,19 @@ class MainActivity : AppCompatActivity() {
         "Bugünün sürprizi bu frekansta.", "Biraz müzik, biraz keyif: işte bugünün radyosu.", "Sana özel değil ama sana göre.",
         "Bugünün şarkıları bu radyoda bir başka.", "Günün en güzel anlarına eşlik etsin.")
 
-    /** The same "Günün frekansı" for everyone on a given day: a popular station with a logo. */
+    private var dailyPick: Station? = null
+
+    /**
+     * "Günün frekansı": a new popular station (with a logo) every time the app is opened,
+     * never the one shown last time; it stays put while moving between pages.
+     */
     private fun dailyStation(): Station? {
-        val pool = stations.filter { it.logoUrl.isNotBlank() }.sortedByDescending { it.votes }.take(150).ifEmpty { stations }
+        dailyPick?.let { pick -> if (stations.any { it.resolvedUrl == pick.resolvedUrl }) return pick }
+        val last = prefs.getString("daily_last", null)
+        val pool = stations.filter { it.logoUrl.isNotBlank() && it.resolvedUrl != last }
+            .sortedByDescending { it.votes }.take(150).ifEmpty { stations }
         if (pool.isEmpty()) return null
-        val key = ListeningStats.dateKey().hashCode()
-        return pool[kotlin.random.Random(key).nextInt(pool.size)]
+        return pool.random().also { dailyPick = it; prefs.edit().putString("daily_last", it.resolvedUrl).apply() }
     }
 
     private fun dailyCard(st: Station): View {

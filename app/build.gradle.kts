@@ -62,4 +62,6 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.1.0")
     testImplementation("junit:junit:4.13.2")
+    // real org.json for local unit tests (the Android one is a stub off-device)
+    testImplementation("org.json:json:20240303")
 }

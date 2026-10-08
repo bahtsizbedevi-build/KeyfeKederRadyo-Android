@@ -37,6 +37,18 @@ jobs:
           gradle-version: '8.13'
       - name: Unit tests and debug APK
         run: gradle testDebugUnitTest assembleDebug --no-daemon
+      - name: Report failed tests
+        if: failure()
+        run: |
+          for f in app/build/test-results/testDebugUnitTest/*.xml; do
+            python3 - "$f" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          for case in ET.parse(sys.argv[1]).getroot().iter("testcase"):
+              for fail in list(case.findall("failure")) + list(case.findall("error")):
+                  msg = (fail.get("message") or fail.text or "").splitlines()[0][:300]
+                  print(f"::error title=Test {case.get('classname','').split('.')[-1]}.{case.get('name')}::{msg}")
+          PY
+          done
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
         with:

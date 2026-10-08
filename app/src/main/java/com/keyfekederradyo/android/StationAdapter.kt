@@ -61,9 +61,7 @@ class StationAdapter(
         }
         top.addView(badgeView); top.addView(favoriteView)
         val logoView = StationArtworkView(context).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.rgb(48,48,52)); setStroke(1.dp(context), Color.rgb(75,75,80)) }
-            clipToOutline = true; layoutParams = LinearLayout.LayoutParams(84.dp(context),84.dp(context)).apply { bottomMargin = 6.dp(context) }
+            layoutParams = LinearLayout.LayoutParams(88.dp(context),88.dp(context)).apply { bottomMargin = 6.dp(context) }
         }
         val titleView = TextView(context).apply {
             textSize = 14.5f; setTextColor(Color.rgb(245,245,247)); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
@@ -103,8 +101,7 @@ class StationAdapter(
         cardBackground.setColor(if (active) Color.rgb(34,27,22) else Color.rgb(27,27,29))
         cardBackground.setStroke(if (active) 2.dp(context) else 1.dp(context), if (active) Color.rgb(255,122,0) else Color.rgb(48,48,51))
         holder.itemView.elevation = if (active) 10.dp(context).toFloat() else 2.dp(context).toFloat()
-        val logoBackground = holder.logoView.background as GradientDrawable
-        logoBackground.setStroke(if (active) 3.dp(context) else 1.dp(context), if (active) Color.rgb(255,122,0) else Color.rgb(75,75,80))
+        holder.logoView.setPlaying(active)
 
         holder.itemView.setOnClickListener {
             holder.itemView.animate().cancel()

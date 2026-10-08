@@ -8,6 +8,7 @@ on:
       - '**.kts'
       - '**.xml'
       - '**.pro'
+      - 'data/**'
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
@@ -34,8 +35,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '8.13'
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Unit tests and debug APK
+        run: gradle testDebugUnitTest assembleDebug --no-daemon
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
         with:

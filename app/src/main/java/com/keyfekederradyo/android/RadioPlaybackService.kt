@@ -55,8 +55,17 @@ class RadioPlaybackService : MediaSessionService() {
         }
     }
 
+    // The sleep timer is set from the UI while the service is already running: re-arm on every change
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "sleep_until") {
+            timerHandler.removeCallbacks(timerRunnable)
+            timerHandler.post(timerRunnable)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
+        getSharedPreferences("radio", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(prefsListener)
         val attrs = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -142,6 +151,7 @@ class RadioPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        getSharedPreferences("radio", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(prefsListener)
         timerHandler.removeCallbacks(timerRunnable)
         reconnectHandler.removeCallbacks(reconnectRunnable)
         PlaybackState.setPlaying(null)

@@ -19,6 +19,9 @@ android {
 
     buildFeatures { buildConfig = true }
 
+    // data/stations.json is bundled as assets/stations.json (offline / first-launch station list)
+    sourceSets["main"].assets.srcDir(rootProject.file("data"))
+
     signingConfigs {
         create("playRelease") {
             val storeFilePath = System.getenv("KEYSTORE_FILE")
@@ -58,4 +61,5 @@ dependencies {
     implementation("androidx.media3:media3-session:1.11.0")
     implementation("androidx.media3:media3-ui:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.1.0")
+    testImplementation("junit:junit:4.13.2")
 }

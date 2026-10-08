@@ -14,7 +14,7 @@ PROJECT=/c/Users/Public/KeyfeRadyo
 PKG=com.keyfekederradyo.android
 SHOTS="$PROJECT/build/shots"
 
-build()   { (cd "$PROJECT" && "$GRADLE" assembleDebug -Pandroid.overridePathCheck=true --console=plain -q 2>&1 | grep -vE 'read-only|Parsing legacy|Loading local|SDK Manager found|is deprecated|overridePathCheck|current default' || true); test -f "$PROJECT/app/build/outputs/apk/debug/app-debug.apk"; }
+build()   { rm -f "$PROJECT/app/build/outputs/apk/debug/app-debug.apk"; (cd "$PROJECT" && "$GRADLE" assembleDebug -Pandroid.overridePathCheck=true --console=plain -q 2>&1 | grep -vE 'read-only|Parsing legacy|Loading local|SDK Manager found|is deprecated|overridePathCheck|current default' || true); test -f "$PROJECT/app/build/outputs/apk/debug/app-debug.apk"; }
 install() { "$ADB" install -r "$(cygpath -w "$PROJECT/app/build/outputs/apk/debug/app-debug.apk")"; }
 run()     { "$ADB" shell am force-stop $PKG; "$ADB" shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null; }
 shot()    { mkdir -p "$SHOTS"; "$ADB" exec-out screencap -p > "$SHOTS/${1:-shot}.png"; echo "$SHOTS/${1:-shot}.png"; }

@@ -1,26 +1,47 @@
 package com.keyfekederradyo.android
 
+import android.content.Context
 import android.net.Uri
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-class StationRepository {
+/**
+ * Station list sources, freshest first:
+ * 1. data/stations.json in the app's GitHub repo (lets us fix streams without an app update)
+ * 2. the last list downloaded successfully, cached on the device
+ * 3. the copy bundled into the APK at build time (always available, also offline)
+ */
+class StationRepository(private val context: Context) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private val sourceUrl =
-        "https://raw.githubusercontent.com/B4htsizBedevevi/KeyfeKederRadyo-Web/main/stations.json"
+        "https://raw.githubusercontent.com/bahtsizbedevi-build/KeyfeKederRadyo-Android/main/data/stations.json"
+    private val cacheFile get() = File(context.filesDir, "stations.json")
 
-    fun load(): List<Station> {
+    /** Instant list from the device cache, or the bundled copy. Never touches the network. */
+    fun loadLocal(): List<Station> {
+        runCatching { cacheFile.readText() }.getOrNull()
+            ?.let { cached -> runCatching { parse(cached) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it } }
+        return parse(context.assets.open("stations.json").bufferedReader().use { it.readText() })
+    }
+
+    /** Downloads the latest list and caches it. Throws when offline or the file is invalid. */
+    fun refresh(): List<Station> {
         val request = Request.Builder().url(sourceUrl).get().build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}")
-            return parse(response.body?.string().orEmpty())
+            val body = response.body?.string().orEmpty()
+            val parsed = parse(body)
+            if (parsed.isEmpty()) error("empty station list")
+            runCatching { cacheFile.writeText(body) }
+            return parsed
         }
     }
 
@@ -39,13 +60,6 @@ class StationRepository {
             if (!seen.add(key)) continue
 
             val homepage = o.optString("homepage").trim()
-            val host = runCatching {
-                Uri.parse(homepage).host.orEmpty().removePrefix("www.")
-            }.getOrDefault("")
-            val logoUrl = if (host.isNotBlank()) {
-                "https://icons.duckduckgo.com/ip3/$host.ico"
-            } else ""
-
             val rawGenre = o.optString("genre").trim()
             val fallbackText = buildString {
                 append(name).append(' ')
@@ -65,13 +79,20 @@ class StationRepository {
                 quality = o.optString("quality").trim(),
                 song = o.optString("song").ifBlank { "Canlı yayın" },
                 homepage = homepage,
-                logoUrl = logoUrl
+                logoUrl = o.optString("logo").trim().ifBlank { faviconFor(homepage) }
             )
         }
 
         return result.sortedWith(
             compareBy<Station> { it.name.lowercase(Locale.ROOT) }
         )
+    }
+
+    private fun faviconFor(homepage: String): String {
+        val host = runCatching { Uri.parse(homepage).host.orEmpty().removePrefix("www.") }.getOrDefault("")
+        return if (host.isNotBlank() && "streamtheworld" !in host && "radyotvonline" !in host) {
+            "https://www.google.com/s2/favicons?domain=$host&sz=128"
+        } else ""
     }
 
     private fun normalizeGenre(raw: String, source: String): String {

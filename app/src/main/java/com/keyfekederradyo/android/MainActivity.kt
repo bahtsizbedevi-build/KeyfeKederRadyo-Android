@@ -71,9 +71,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
-        setContentView(buildUi())
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg))
+        runCatching { android.net.http.HttpResponseCache.install(java.io.File(cacheDir, "http"), 16L * 1024 * 1024) }
+        val content = buildUi()
+        // Android 15+ draws edge-to-edge: keep the UI clear of the status and navigation bars
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+        setContentView(content)
         handler.postDelayed(taglineRunnable, 1800L)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -236,7 +243,7 @@ class MainActivity : AppCompatActivity() {
         val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
         val moodItems=listOf(R.drawable.ic_moon to "Sakin",R.drawable.ic_heart to "Dertli",R.drawable.ic_bolt to "Enerjik",R.drawable.ic_car to "Yoldayım",R.drawable.ic_coffee to "Kafamı dinliyorum")
         moodItems.forEach{(iconRes,label)->
-            val chip=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER;setPadding(d(13),0,d(15),0);background=rounded(surface2,20);isClickable=true;setOnClickListener{tap(this);pickForMe()}}
+            val chip=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER;setPadding(d(13),0,d(15),0);background=rounded(surface2,20);isClickable=true;setOnClickListener{tap(this);showMood(label)}}
             chip.addView(ImageView(this).apply{setImageResource(iconRes);setColorFilter(white);layoutParams=LinearLayout.LayoutParams(d(18),d(20)).apply{rightMargin=d(7)}})
             chip.addView(TextView(this).apply{text=label;textSize=12f;setTextColor(white);gravity=Gravity.CENTER})
             row.addView(chip,LinearLayout.LayoutParams(-2,d(42)).apply{rightMargin=d(8)})
@@ -253,6 +260,12 @@ class MainActivity : AppCompatActivity() {
         info.addView(TextView(this).apply { text="KEYFİME BIRAK"; textSize=16f; setTextColor(white); setTypeface(typeface,android.graphics.Typeface.BOLD); letterSpacing=0.04f })
         info.addView(TextView(this).apply { text="Ben bir frekans bulayım, kararı sen ver."; textSize=11f; setTextColor(Color.rgb(204,166,136)) })
         card.addView(info); card.addView(TextView(this).apply { text="›"; textSize=30f; setTextColor(orange); gravity=Gravity.CENTER },LinearLayout.LayoutParams(d(30),d(56))); return card
+    }
+
+    private fun showMood(mood:String) {
+        if(stations.isEmpty()){android.widget.Toast.makeText(this,"Radyolar henüz yükleniyor.",android.widget.Toast.LENGTH_SHORT).show();return}
+        val list=RadioMoodMatcher.rank(stations,mood)
+        if(list.isEmpty()) android.widget.Toast.makeText(this,"Bu moda uygun radyo bulamadım. Keyfime Bırak'ı dene.",android.widget.Toast.LENGTH_SHORT).show() else {showRadios(list);selectNav(1)}
     }
 
     private fun pickForMe() {
@@ -453,11 +466,11 @@ class MainActivity : AppCompatActivity() {
             leftMargin=d(4);rightMargin=d(4);topMargin=d(4);bottomMargin=d(-1)
         })
         val artwork=StationArtworkView(this).apply{
-            background=rounded(Color.rgb(18,18,19),22)
-            clipToOutline=true
             bind(station.name,station.genre,station.logoUrl)
+            setPlaying(station.resolvedUrl==controller?.currentMediaItem?.mediaId&&controller?.isPlaying==true)
         }
-        card.addView(artwork,FrameLayout.LayoutParams(-1,-1))
+        // Cover sits in the upper part of the card; name and genre stay readable below it
+        card.addView(artwork,FrameLayout.LayoutParams(d(100),d(100)).apply{gravity=Gravity.TOP or Gravity.CENTER_HORIZONTAL;topMargin=d(12)})
 
         val shade=View(this).apply{
             background=android.graphics.drawable.GradientDrawable(
@@ -572,7 +585,20 @@ class MainActivity : AppCompatActivity() {
         title.text=station.name;nowPlaying="";status.text="Bağlanıyor...";liveBadge.text="BAĞLANIYOR";liveBadge.setTextColor(orange);miniLogo.bind(station.name,station.genre,station.logoUrl);miniLogo.setPlaying(true);spectrum.setStationSeed(station.name.hashCode());spectrum.restart();fullPlayerRefresh?.invoke()
     }
     private fun filter(query:String){val q=query.trim();val list=if(q.isBlank())stations else stations.filter{it.name.contains(q,true)||it.genre.contains(q,true)||it.country.contains(q,true)||it.language.contains(q,true)};if(selectedNav==0){showRadios(list);selectNav(1)}else adapter.submitList(list)}
-    private fun loadStations(){executor.execute{try{val loaded=StationRepository().load();runOnUiThread{if(isFinishing||isDestroyed)return@runOnUiThread;stations=loaded;adapter.submitList(loaded);if(selectedNav==0)buildHome();syncCurrentStation()}}catch(_:Exception){runOnUiThread{if(!isFinishing&&!isDestroyed)status.text="Radyoları getiremedik, birazdan tekrar deneriz. "}}}}
+    private fun loadStations(){
+        val repo=StationRepository(applicationContext)
+        executor.execute{
+            // Show the cached/bundled list immediately, then swap in the fresh one if it downloads
+            runCatching{repo.loadLocal()}.getOrNull()?.let{local->runOnUiThread{applyStations(local)}}
+            runCatching{repo.refresh()}.getOrNull()?.let{fresh->runOnUiThread{applyStations(fresh)}}
+        }
+    }
+    private fun applyStations(loaded:List<Station>){
+        if(isFinishing||isDestroyed||loaded.isEmpty()||loaded==stations)return
+        stations=loaded
+        when(selectedNav){0->buildHome();1->if(search.text.isNullOrBlank())adapter.submitList(loaded) else filter(search.text.toString());2->buildDiscover();3->showRadios(loaded.filter{isFavorite(it)})}
+        syncCurrentStation()
+    }
     private fun historyStations():List<Station>{val urls=prefs.getString("history","").orEmpty().split("|").filter{it.isNotBlank()};return urls.mapNotNull{url->stations.firstOrNull{it.resolvedUrl==url}}.take(10)}
     private fun rememberStation(station:Station){val urls=prefs.getString("history","").orEmpty().split("|").filter{it.isNotBlank()&&it!=station.resolvedUrl}.toMutableList();urls.add(0,station.resolvedUrl);prefs.edit().putString("history",urls.take(12).joinToString("|")).apply()}
     private fun isFavorite(station:Station)=prefs.getBoolean(station.resolvedUrl,false)
@@ -589,12 +615,12 @@ class MainActivity : AppCompatActivity() {
         val dialog=android.app.Dialog(this);val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(20),d(18),d(20),d(16));background=GradientDrawable().apply{setColor(Color.rgb(20,20,22));cornerRadius=d(28).toFloat();setStroke(d(1),Color.rgb(50,50,54))}}
         root.addView(TextView(this).apply{text="Ayarlar";textSize=25f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD)},LinearLayout.LayoutParams(-1,d(38)))
         root.addView(sectionLabel("OYNATMA"))
-        root.addView(settingCard("🌙","Uyku zamanlayıcısı",sleepTimerLabel()){val options=arrayOf("Kapalı","15 dakika","30 dakika","45 dakika","60 dakika","90 dakika");android.app.AlertDialog.Builder(this@MainActivity).setTitle("Uyku zamanlayıcısı").setItems(options){_,which->val mins=when(which){0->0L;1->15L;2->30L;3->45L;4->60L;else->90L};prefs.edit().putLong("sleep_until",if(mins==0L)0L else System.currentTimeMillis()+mins*60_000L).apply()}.show()})
-        root.addView(settingCard("Arka plan","Arka planda çalma","Yayın açıkken uygulamadan çıkabilirsin"){android.widget.Toast.makeText(this,"Arka planda çalma etkin: medya servisi yayını sürdürüyor.",android.widget.Toast.LENGTH_SHORT).show()})
-        root.addView(sectionLabel("GÖRÜNÜM"));root.addView(settingCard("Akıcı","Akıcı animasyonlar","Kartlar ve spectrum efektleri açık",null));root.addView(settingCard("Tema","Keyfe Keder teması","Turuncu imza renk",null));root.addView(sectionLabel("UYGULAMA"));root.addView(settingCard("Radyo","Keyfe Keder Radyo","Android • "+BuildConfig.VERSION_NAME,null));dialog.setContentView(root);dialog.window?.setBackgroundDrawableResource(android.R.color.transparent);dialog.show();dialog.window?.setLayout(-1,-2)
+        root.addView(settingCard(R.drawable.ic_moon,"Uyku zamanlayıcısı",sleepTimerLabel()){val options=arrayOf("Kapalı","15 dakika","30 dakika","45 dakika","60 dakika","90 dakika");android.app.AlertDialog.Builder(this@MainActivity).setTitle("Uyku zamanlayıcısı").setItems(options){_,which->val mins=when(which){0->0L;1->15L;2->30L;3->45L;4->60L;else->90L};prefs.edit().putLong("sleep_until",if(mins==0L)0L else System.currentTimeMillis()+mins*60_000L).apply()}.show()})
+        root.addView(settingCard(R.drawable.ic_play,"Arka planda çalma","Yayın açıkken uygulamadan çıkabilirsin"){android.widget.Toast.makeText(this,"Arka planda çalma etkin: medya servisi yayını sürdürüyor.",android.widget.Toast.LENGTH_SHORT).show()})
+        root.addView(sectionLabel("GÖRÜNÜM"));root.addView(settingCard(R.drawable.ic_bolt,"Akıcı animasyonlar","Kartlar ve spectrum efektleri açık",null));root.addView(settingCard(R.drawable.ic_settings,"Keyfe Keder teması","Turuncu imza renk",null));root.addView(sectionLabel("UYGULAMA"));root.addView(settingCard(R.drawable.ic_radio,"Keyfe Keder Radyo","Android • "+BuildConfig.VERSION_NAME,null));dialog.setContentView(root);dialog.window?.setBackgroundDrawableResource(android.R.color.transparent);dialog.show();dialog.window?.setLayout(-1,-2)
     }
     private fun sectionLabel(value:String)=TextView(this).apply{text=value;textSize=10f;setTextColor(orange);setTypeface(typeface,android.graphics.Typeface.BOLD);setPadding(d(4),d(14),d(4),d(7))}
-    private fun settingCard(icon:String,name:String,detail:String,action:(()->Unit)?):View{val card=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(d(14),d(9),d(12),d(9));background=rounded(surface2,18);if(action!=null)setOnClickListener{tap(this);action.invoke()}};card.addView(TextView(this).apply{text=icon;textSize=19f;gravity=Gravity.CENTER},LinearLayout.LayoutParams(d(42),d(50)));val info=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL;layoutParams=LinearLayout.LayoutParams(0,-2,1f)};info.addView(TextView(this).apply{text=name;textSize=14f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD)});info.addView(TextView(this).apply{text=detail;textSize=10f;setTextColor(muted)});card.addView(info);return card}
+    private fun settingCard(icon:Int,name:String,detail:String,action:(()->Unit)?):View{val card=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(d(14),d(9),d(12),d(9));background=rounded(surface2,18);if(action!=null)setOnClickListener{tap(this);action.invoke()}};card.addView(ImageView(this).apply{setImageResource(icon);setColorFilter(orange);scaleType=ImageView.ScaleType.CENTER_INSIDE;setPadding(d(10),d(13),d(10),d(13))},LinearLayout.LayoutParams(d(42),d(50)));val info=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL;layoutParams=LinearLayout.LayoutParams(0,-2,1f)};info.addView(TextView(this).apply{text=name;textSize=14f;setTextColor(white);setTypeface(typeface,android.graphics.Typeface.BOLD)});info.addView(TextView(this).apply{text=detail;textSize=10f;setTextColor(muted)});card.addView(info);return card}
     private fun sleepTimerLabel():String{val until=prefs.getLong("sleep_until",0L);if(until<=System.currentTimeMillis())return "Kapalı";return "Yaklaşık "+(((until-System.currentTimeMillis())/60000L).coerceAtLeast(1L))+" dk kaldı"}
 
     private fun showFullPlayer(){

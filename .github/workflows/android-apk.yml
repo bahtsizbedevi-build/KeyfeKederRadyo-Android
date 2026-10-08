@@ -37,7 +37,7 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
       - name: Upload debug APK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: keyfe-keder-radyo-debug
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -93,7 +93,10 @@ jobs:
           KS="$RUNNER_TEMP/play-release.keystore"
           # Accept plain base64, wrapped lines, CRLF, or certutil -encode output (BEGIN/END header lines)
           printf '%s' "$PLAY_KEYSTORE_BASE64" | grep -v -e '-----' | tr -d ' \r\n\t' > "$RUNNER_TEMP/ks.b64"
+          # Diagnostics only (no secret content): length, invalid char count, short hash
+          echo "Base64 secret: length $(wc -c < "$RUNNER_TEMP/ks.b64"), non-base64 chars $(tr -d 'A-Za-z0-9+/=' < "$RUNNER_TEMP/ks.b64" | wc -c), sha256 prefix $(sha256sum "$RUNNER_TEMP/ks.b64" | cut -c1-12)"
           if ! base64 --decode "$RUNNER_TEMP/ks.b64" > "$KS" 2>/dev/null; then
+            echo "::error::PLAY_KEYSTORE_BASE64 diagnostics: length $(wc -c < "$RUNNER_TEMP/ks.b64"), non-base64 chars $(tr -d 'A-Za-z0-9+/=' < "$RUNNER_TEMP/ks.b64" | wc -c), sha256 prefix $(sha256sum "$RUNNER_TEMP/ks.b64" | cut -c1-12)"
             rm -f "$RUNNER_TEMP/ks.b64"
             echo "::error::PLAY_KEYSTORE_BASE64 is not valid base64. Re-create it from the .jks/.keystore file (see docs/google-play-release.md)."
             exit 1
@@ -181,7 +184,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload signed Play AAB
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: keyfe-keder-radyo-play-aab
           path: app/build/outputs/bundle/release/app-release.aab

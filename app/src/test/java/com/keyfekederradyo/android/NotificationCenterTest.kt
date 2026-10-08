@@ -53,9 +53,12 @@ class NotificationCenterTest {
 
     @Test
     fun comeback_message_after_three_quiet_days() {
-        assertNotNull(NotificationCenter.compose(config, "weekday_evening", "Kral FM", 4, null, 20).also {
-            assertTrue(it!!.first in setOf("Seni özledik", "Bir süredir yoksun"))
-        })
+        val comebackTitles = config.comeback.map { it.title }.filter { "{name}" !in it }.toSet()
+        repeat(20) { seed ->
+            val msg = NotificationCenter.compose(config, "weekday_evening", "Kral FM", 4, null, 20, Random(seed))
+            assertNotNull(msg)
+            assertTrue(msg!!.first, msg.first in comebackTitles)
+        }
     }
 
     @Test

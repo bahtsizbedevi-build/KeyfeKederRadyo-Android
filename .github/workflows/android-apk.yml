@@ -171,7 +171,10 @@ jobs:
           grep -q 'jar verified' "$RUNNER_TEMP/jarsigner.txt" || { echo "::error::AAB not verified"; exit 1; }
           if grep -q 'jar is unsigned' "$RUNNER_TEMP/jarsigner.txt"; then echo "::error::AAB is unsigned"; exit 1; fi
           grep -v '^$' "$RUNNER_TEMP/jarsigner.txt" | while IFS= read -r line; do echo "::notice title=jarsigner::$line"; done
-          SIGNER=$(keytool -printcert -jarfile "$AAB")
+          # Read the certificate straight from the signature block (-jarfile trips over AAB metadata entries)
+          SIGBLOCK=$(unzip -Z1 "$AAB" | grep -m1 -E '^META-INF/[^/]+\.(RSA|DSA|EC)$')
+          unzip -p "$AAB" "$SIGBLOCK" > "$RUNNER_TEMP/sigblock"
+          SIGNER=$(keytool -printcert -file "$RUNNER_TEMP/sigblock")
           echo "$SIGNER" | grep -E 'Owner:|SHA256:'
           if echo "$SIGNER" | grep -q 'CN=Android Debug'; then echo "::error::AAB is signed with the DEBUG key"; exit 1; fi
           AAB_SHA=$(echo "$SIGNER" | grep -m1 'SHA256:' | awk '{print $2}')
